@@ -1,0 +1,48 @@
+# GoReleaser configuration. The release workflow is wired up in Packet 6;
+# this file exists so the release pipeline has a valid base to build on.
+version: 2
+
+project_name: unearth
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: unearth
+    main: ./cmd/unearth
+    binary: unearth
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+  - id: unearth-mcp
+    main: ./cmd/unearth-mcp
+    binary: unearth-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    ids:
+      - unearth
+      - unearth-mcp
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  draft: true
