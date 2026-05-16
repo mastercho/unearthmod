@@ -49,8 +49,8 @@ type jsonlRow struct {
 
 func (s *jsonlSink) write(stdout, stderr io.Writer, res *unearth.Result, f *rootFlags) error {
 	enc := json.NewEncoder(stdout)
-	cap := capN(s.top, len(res.Candidates))
-	for _, c := range res.Candidates[:cap] {
+	limit := capN(s.top, len(res.Candidates))
+	for _, c := range res.Candidates[:limit] {
 		if err := enc.Encode(jsonlRow{Target: res.Target, ScoredIP: c}); err != nil {
 			return err
 		}
@@ -112,8 +112,8 @@ func (s *tableSink) write(stdout, _ io.Writer, res *unearth.Result, _ *rootFlags
 	if _, err := fmt.Fprintln(tw, "  IP\tSCORE\tCORROB\tTECHNIQUES"); err != nil {
 		return err
 	}
-	cap := capN(s.top, len(res.Candidates))
-	for _, c := range res.Candidates[:cap] {
+	limit := capN(s.top, len(res.Candidates))
+	for _, c := range res.Candidates[:limit] {
 		score := fmt.Sprintf("%.3f", c.Score)
 		if s.color {
 			score = s.colorScore(c.Score) + score + ansiReset

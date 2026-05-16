@@ -1,9 +1,6 @@
 package cli
 
-import (
-	"io"
-	"os"
-)
+import "os"
 
 // isTTY reports whether w is a terminal. Bytes-buffer / *os.File-pointing-
 // at-pipe both return false; only an *os.File whose fd is a real TTY
@@ -21,6 +18,3 @@ func isTTY(w any) bool {
 	return (st.Mode() & os.ModeCharDevice) != 0
 }
 
-// discardTTY satisfies io.Writer for places where we want to feed
-// isTTY-aware logic a definitively-not-a-TTY writer.
-type discardTTY struct{ io.Writer }
