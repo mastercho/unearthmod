@@ -131,7 +131,7 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 				fmt.Sprintf("cache: open failed (%s); running without cache", err))
 		} else {
 			cstore = c
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 		}
 	}
 

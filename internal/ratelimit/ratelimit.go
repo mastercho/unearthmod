@@ -139,15 +139,15 @@ func NewBudget(caps techniques.BudgetCaps) *Budget {
 	return b
 }
 
-func (b *Budget) set(service string, cap int) {
-	if cap == 0 {
+func (b *Budget) set(service string, limit int) {
+	if limit == 0 {
 		b.unlimited[service] = true
 		return
 	}
-	if cap < 0 {
-		cap = 0
+	if limit < 0 {
+		limit = 0
 	}
-	b.remaining[service] = cap
+	b.remaining[service] = limit
 }
 
 // Charge attempts to consume one call against the named budget. It returns

@@ -66,10 +66,10 @@ type rewriteTransport struct {
 func (r *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Map the well-known paths Refresh uses to test server paths.
 	clone := req.Clone(req.Context())
-	switch {
-	case req.URL.Path == "/ips-v4":
+	switch req.URL.Path {
+	case "/ips-v4":
 		clone.URL, _ = clone.URL.Parse(r.target + "/ips-v4")
-	case req.URL.Path == "/ips-v6":
+	case "/ips-v6":
 		clone.URL, _ = clone.URL.Parse(r.target + "/ips-v6")
 	default:
 		clone.URL, _ = clone.URL.Parse(r.target + "/ip-ranges.json")

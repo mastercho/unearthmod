@@ -42,7 +42,7 @@ func TestNew_UserAgentStamped(t *testing.T) {
 
 func TestNew_CustomUserAgent(t *testing.T) {
 	var seen string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = r.Header.Get("User-Agent")
 	}))
 	defer srv.Close()

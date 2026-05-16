@@ -70,7 +70,7 @@ func TestLimiter_WaitSucceedsForFastBucket(t *testing.T) {
 	}
 }
 
-func TestLimiter_BucketReuseConcurrent(t *testing.T) {
+func TestLimiter_BucketReuseConcurrent(_ *testing.T) {
 	l := NewLimiter(nil)
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {
@@ -138,11 +138,11 @@ func TestBudget_RemainingForUnknownServiceIsUnlimited(t *testing.T) {
 func TestBudget_ConcurrentChargesExactlyN(t *testing.T) {
 	// N goroutines hammering a budget of M must result in exactly M
 	// successful charges, no more.
-	const cap = 100
+	const limit = 100
 	const workers = 64
 	const opsPerWorker = 10
 
-	b := NewBudget(techniques.BudgetCaps{Shodan: cap})
+	b := NewBudget(techniques.BudgetCaps{Shodan: limit})
 
 	var ok int64
 	var wg sync.WaitGroup
@@ -159,8 +159,8 @@ func TestBudget_ConcurrentChargesExactlyN(t *testing.T) {
 	}
 	wg.Wait()
 
-	if got := atomic.LoadInt64(&ok); got != cap {
-		t.Errorf("successful charges: want exactly %d, got %d", cap, got)
+	if got := atomic.LoadInt64(&ok); got != limit {
+		t.Errorf("successful charges: want exactly %d, got %d", limit, got)
 	}
 	if r := b.Remaining("shodan"); r != 0 {
 		t.Errorf("Remaining after exhaustion: want 0, got %d", r)

@@ -64,7 +64,7 @@ func New(opts Options) *http.Client {
 	return &http.Client{
 		Transport: &uaTransport{base: transport, userAgent: opts.UserAgent},
 		Timeout:   opts.Timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
 			if len(via) >= opts.MaxRedirects {
 				return errors.New("httpclient: too many redirects")
 			}

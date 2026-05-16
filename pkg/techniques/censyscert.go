@@ -98,7 +98,7 @@ func (censysCertTechnique) Run(ctx context.Context, target string, opts RunOptio
 	if err != nil {
 		return nil, fmt.Errorf("censys_cert: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("censys_cert: %s status %d", censysSearchV2Hosts, resp.StatusCode)
 	}
@@ -147,7 +147,7 @@ func realTLSFingerprint(ctx context.Context, target string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	tc, ok := conn.(*tls.Conn)
 	if !ok {
 		return "", errors.New("tls handshake did not return *tls.Conn")

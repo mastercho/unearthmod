@@ -20,6 +20,8 @@ import (
 	"sync"
 	"time"
 
+	// modernc.org/sqlite registers itself as the "sqlite" database/sql
+	// driver via init(); we never reference its API directly.
 	_ "modernc.org/sqlite"
 )
 

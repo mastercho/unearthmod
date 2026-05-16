@@ -296,7 +296,7 @@ func headerProbe(ctx context.Context, target string, hc *http.Client) (string, [
 	if err != nil {
 		return "", nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return classifyHeaders(resp.Header), collectHeaderSignals(resp.Header), nil
 }
 
@@ -401,7 +401,7 @@ func fetch(ctx context.Context, hc *http.Client, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("%s: status %d", url, resp.StatusCode)
 	}

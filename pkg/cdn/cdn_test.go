@@ -186,7 +186,7 @@ func TestDetect_HTTPHeadersOnly(t *testing.T) {
 	}
 }
 
-func TestDetect_NilClientUsesDefault(t *testing.T) {
+func TestDetect_NilClientUsesDefault(_ *testing.T) {
 	// Calling with nil hc must not panic. Use a target that won't resolve
 	// so DNS/HTTP both fail; we only assert no panic and a usable
 	// Detection result.
