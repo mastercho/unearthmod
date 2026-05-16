@@ -172,6 +172,7 @@ func resolveUserPath(explicit string) (string, error) {
 // engine treats as "skip that technique" rather than as an error.
 func LoadAPIKeys() techniques.APIKeys {
 	return techniques.APIKeys{
+		CensysPlatformPAT: os.Getenv("UNEARTH_CENSYS_PAT"),
 		CensysAPIID:       os.Getenv("UNEARTH_CENSYS_API_ID"),
 		CensysAPISecret:   os.Getenv("UNEARTH_CENSYS_API_SECRET"),
 		ShodanAPIKey:      os.Getenv("UNEARTH_SHODAN_API_KEY"),
@@ -182,10 +183,12 @@ func LoadAPIKeys() techniques.APIKeys {
 
 // CredentialStatus reports, per service, whether usable credentials are set.
 // Keys: "censys", "shodan", "securitytrails", "viewdns". The "censys" entry
-// is true only when both the id and secret are present.
+// is true when a Censys Platform PAT is present. The legacy ID/secret pair
+// is no longer consulted: the Censys Search v2 API it authenticates is
+// disabled for Free accounts and is sunsetting in 2026.
 func CredentialStatus(k techniques.APIKeys) map[string]bool {
 	return map[string]bool{
-		"censys":         k.CensysAPIID != "" && k.CensysAPISecret != "",
+		"censys":         k.CensysPlatformPAT != "",
 		"shodan":         k.ShodanAPIKey != "",
 		"securitytrails": k.SecurityTrailsKey != "",
 		"viewdns":        k.ViewDNSKey != "",

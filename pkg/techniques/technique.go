@@ -55,8 +55,24 @@ type Candidate struct {
 // APIKeys holds optional third-party credentials. An empty field means the
 // technique that depends on it is skipped rather than failed.
 type APIKeys struct {
-	CensysAPIID       string
-	CensysAPISecret   string
+	// CensysPlatformPAT is the Personal Access Token for the Censys
+	// Platform API (api.platform.censys.io). Required to run
+	// censys_cert. Generated at https://platform.censys.io account
+	// settings → Personal Access Tokens.
+	CensysPlatformPAT string
+
+	// CensysAPIID is the legacy Censys Search v1/v2 API id.
+	//
+	// Deprecated: superseded by CensysPlatformPAT. The legacy Search API
+	// is disabled for Free accounts and is sunsetting in 2026. Kept here
+	// only to avoid a breaking schema change; a later cleanup packet will
+	// remove it.
+	CensysAPIID string
+	// CensysAPISecret is the legacy Censys Search v1/v2 API secret.
+	//
+	// Deprecated: superseded by CensysPlatformPAT — see CensysAPIID.
+	CensysAPISecret string
+
 	ShodanAPIKey      string
 	SecurityTrailsKey string
 	ViewDNSKey        string

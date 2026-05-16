@@ -166,14 +166,18 @@ func TestWeights_ZeroValue(t *testing.T) {
 }
 
 func TestLoadAPIKeys(t *testing.T) {
+	t.Setenv("UNEARTH_CENSYS_PAT", "pat-tok")
 	t.Setenv("UNEARTH_CENSYS_API_ID", "id-x")
 	t.Setenv("UNEARTH_CENSYS_API_SECRET", "secret-x")
 	t.Setenv("UNEARTH_SHODAN_API_KEY", "sho")
 	t.Setenv("UNEARTH_SECURITYTRAILS_API_KEY", "st")
 	t.Setenv("UNEARTH_VIEWDNS_API_KEY", "vd")
 	k := LoadAPIKeys()
+	if k.CensysPlatformPAT != "pat-tok" {
+		t.Errorf("censys PAT: %+v", k)
+	}
 	if k.CensysAPIID != "id-x" || k.CensysAPISecret != "secret-x" {
-		t.Errorf("censys: %+v", k)
+		t.Errorf("legacy censys (still loaded for deprecation window): %+v", k)
 	}
 	if k.ShodanAPIKey != "sho" || k.SecurityTrailsKey != "st" || k.ViewDNSKey != "vd" {
 		t.Errorf("misc: %+v", k)
@@ -195,35 +199,31 @@ func TestLoadAPIKeys_EmptyEnv(t *testing.T) {
 func TestCredentialStatus(t *testing.T) {
 	tests := []struct {
 		name string
-		set  func() (id, sec, sho, st, vd string)
+		set  func() (pat, sho, st, vd string)
 		want map[string]bool
 	}{
 		{
 			name: "all empty",
-			set:  func() (string, string, string, string, string) { return "", "", "", "", "" },
+			set:  func() (string, string, string, string) { return "", "", "", "" },
 			want: map[string]bool{"censys": false, "shodan": false, "securitytrails": false, "viewdns": false},
 		},
 		{
-			name: "censys partial = false",
-			set:  func() (string, string, string, string, string) { return "id", "", "", "", "" },
-			want: map[string]bool{"censys": false, "shodan": false, "securitytrails": false, "viewdns": false},
-		},
-		{
-			name: "censys both = true",
-			set:  func() (string, string, string, string, string) { return "id", "sec", "", "", "" },
+			name: "censys PAT only",
+			set:  func() (string, string, string, string) { return "pat", "", "", "" },
 			want: map[string]bool{"censys": true, "shodan": false, "securitytrails": false, "viewdns": false},
 		},
 		{
 			name: "all set",
-			set:  func() (string, string, string, string, string) { return "i", "s", "k", "t", "v" },
+			set:  func() (string, string, string, string) { return "p", "k", "t", "v" },
 			want: map[string]bool{"censys": true, "shodan": true, "securitytrails": true, "viewdns": true},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			id, sec, sho, st, vd := tc.set()
-			t.Setenv("UNEARTH_CENSYS_API_ID", id)
-			t.Setenv("UNEARTH_CENSYS_API_SECRET", sec)
+			pat, sho, st, vd := tc.set()
+			t.Setenv("UNEARTH_CENSYS_PAT", pat)
+			t.Setenv("UNEARTH_CENSYS_API_ID", "")
+			t.Setenv("UNEARTH_CENSYS_API_SECRET", "")
 			t.Setenv("UNEARTH_SHODAN_API_KEY", sho)
 			t.Setenv("UNEARTH_SECURITYTRAILS_API_KEY", st)
 			t.Setenv("UNEARTH_VIEWDNS_API_KEY", vd)

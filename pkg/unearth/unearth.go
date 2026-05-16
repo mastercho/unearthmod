@@ -337,7 +337,7 @@ var cdnDetect = cdn.Detect
 func hasKeyFor(name string, k techniques.APIKeys) bool {
 	switch name {
 	case "censys_cert":
-		return k.CensysAPIID != "" && k.CensysAPISecret != ""
+		return k.CensysPlatformPAT != ""
 	case "dns_history":
 		return k.SecurityTrailsKey != "" || k.ViewDNSKey != ""
 	case "shodan_cert":
