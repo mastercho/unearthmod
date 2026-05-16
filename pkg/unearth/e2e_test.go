@@ -20,6 +20,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/unearth-tool/unearth/pkg/techniques"
 )
 
 func TestE2E_DiscoverExampleCom(t *testing.T) {
@@ -56,6 +58,37 @@ func TestE2E_DiscoverExampleCom(t *testing.T) {
 				}
 				return ns
 			}())
+	}
+	for _, e := range res.Errors {
+		t.Logf("  err[%s] reason=%q: %s", e.Technique, e.Reason, e.Err)
+	}
+}
+
+func TestE2E_ActiveTier(t *testing.T) {
+	opts := DefaultOptions()
+	opts.Tier = techniques.TierActive
+	opts.OverallTimeout = 2 * time.Minute
+	opts.PerTechniqueTimeout = 30 * time.Second
+	opts.NoCache = true
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	res, err := Discover(ctx, "example.com", opts)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if res == nil {
+		t.Fatal("nil result")
+	}
+	t.Logf("e2e --active example.com: cdn=%q candidates=%d errors=%d warnings=%d",
+		res.CDNDetected, len(res.Candidates), len(res.Errors), len(res.Warnings))
+	for _, c := range res.Candidates {
+		names := make([]string, len(c.Techniques))
+		for i, h := range c.Techniques {
+			names[i] = h.Name
+		}
+		t.Logf("  %-40s score=%.3f corrob=%d %v", c.IP, c.Score, c.Corroboration, names)
 	}
 	for _, e := range res.Errors {
 		t.Logf("  err[%s] reason=%q: %s", e.Technique, e.Reason, e.Err)

@@ -17,4 +17,12 @@ var (
 	// reports false during a run. The engine maps it to reason
 	// "budget_exhausted" on TechniqueErr.
 	ErrBudgetExhausted = errors.New("budget exhausted")
+
+	// ErrTierInsufficient is returned by a technique whose third-party
+	// API rejected the request because the caller's account tier does
+	// not include the required capability (typical for Censys and
+	// Shodan paid-only features). The engine maps it to reason
+	// "tier_insufficient" on TechniqueErr — a clean skip, not an
+	// error condition the user needs to act on.
+	ErrTierInsufficient = errors.New("API tier insufficient")
 )

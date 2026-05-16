@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"sort"
 	"sync"
 	"time"
@@ -168,9 +169,13 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 		Refresh:     opts.Refresh,
 	}
 
-	// Select techniques, filter for missing keys.
+	// Select techniques, filter for missing keys, split into the
+	// two execution phases described in Packet 5A §6: producers run
+	// first in parallel; consumers (techniques that implement
+	// techniques.CandidateConsumer and opt in) run second with the
+	// pooled candidate IPs from phase 1 in RunOptions.SeedIPs.
 	selected := techniqueSelector(opts.Tier)
-	var runnable []techniques.Technique
+	var phase1, phase2 []techniques.Technique
 	for _, t := range selected {
 		if t.RequiresAPIKey() && !hasKeyFor(t.Name(), opts.APIKeys) {
 			result.Errors = append(result.Errors, TechniqueErr{
@@ -180,59 +185,51 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 			})
 			continue
 		}
-		runnable = append(runnable, t)
+		if cc, ok := t.(techniques.CandidateConsumer); ok && cc.ConsumesCandidates() {
+			phase2 = append(phase2, t)
+		} else {
+			phase1 = append(phase1, t)
+		}
 	}
 
-	// Run in parallel, bounded by Concurrency.
-	type techResult struct {
-		t          techniques.Technique
-		candidates []techniques.Candidate
-		err        error
-	}
-	results := make([]techResult, len(runnable))
-	sem := make(chan struct{}, opts.Concurrency)
-	var wg sync.WaitGroup
-	for i, t := range runnable {
-		wg.Add(1)
-		i, t := i, t
-		go func() {
-			defer wg.Done()
-			select {
-			case sem <- struct{}{}:
-			case <-overallCtx.Done():
-				results[i] = techResult{t: t, err: overallCtx.Err()}
-				return
-			}
-			defer func() { <-sem }()
-			results[i] = runOne(overallCtx, t, target, runOpts, opts.PerTechniqueTimeout)
-		}()
-	}
-	wg.Wait()
-
-	// Fold results.
 	groups := map[string]*ScoredIP{}
-	for _, r := range results {
-		if r.err != nil {
-			result.Errors = append(result.Errors, TechniqueErr{
-				Technique: r.t.Name(),
-				Err:       r.err.Error(),
-				Reason:    reasonForErr(r.err),
-			})
-			continue
-		}
-		w := resolveWeight(weights, r.t)
-		for _, c := range r.candidates {
-			g, ok := groups[c.IP]
-			if !ok {
-				g = &ScoredIP{IP: c.IP}
-				groups[c.IP] = g
+	foldResults := func(rs []techResult) {
+		for _, r := range rs {
+			if r.err != nil {
+				result.Errors = append(result.Errors, TechniqueErr{
+					Technique: r.t.Name(),
+					Err:       r.err.Error(),
+					Reason:    reasonForErr(r.err),
+				})
+				continue
 			}
-			g.Techniques = append(g.Techniques, TechniqueHit{
-				Name:     r.t.Name(),
-				Weight:   w,
-				Evidence: c.Evidence,
-			})
+			w := resolveWeight(weights, r.t)
+			for _, c := range r.candidates {
+				g, ok := groups[c.IP]
+				if !ok {
+					g = &ScoredIP{IP: c.IP}
+					groups[c.IP] = g
+				}
+				g.Techniques = append(g.Techniques, TechniqueHit{
+					Name:     r.t.Name(),
+					Weight:   w,
+					Evidence: c.Evidence,
+				})
+			}
 		}
+	}
+
+	// Phase 1: producers.
+	phase1Results := runBatch(overallCtx, phase1, target, runOpts, opts)
+	foldResults(phase1Results)
+
+	// Phase 2: consumers, with the pooled phase-1 IPs as seeds.
+	if len(phase2) > 0 {
+		seeds := collectSeedIPs(groups)
+		phase2Opts := runOpts
+		phase2Opts.SeedIPs = seeds
+		phase2Results := runBatch(overallCtx, phase2, target, phase2Opts, opts)
+		foldResults(phase2Results)
 	}
 
 	// Score and finalize.
@@ -261,17 +258,69 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 	return result, nil
 }
 
-// runOne runs a single technique under a child context with the per-
-// technique timeout, recovers from any panic the technique might throw, and
-// returns a normalized techResult-shaped trio.
-func runOne(
-	ctx context.Context, t techniques.Technique, target string,
-	opts techniques.RunOptions, timeout time.Duration,
-) (out struct {
+// techResult bundles one technique's outcome for engine-internal use.
+type techResult struct {
 	t          techniques.Technique
 	candidates []techniques.Candidate
 	err        error
-}) {
+}
+
+// runBatch executes the techniques in techs in parallel (bounded by
+// opts.Concurrency), each under a child context with opts.PerTechniqueTimeout.
+// Used twice in Discover: once for phase-1 producers, once for phase-2
+// consumers with seeded IPs.
+func runBatch(
+	ctx context.Context, techs []techniques.Technique, target string,
+	runOpts techniques.RunOptions, opts Options,
+) []techResult {
+	results := make([]techResult, len(techs))
+	if len(techs) == 0 {
+		return results
+	}
+	sem := make(chan struct{}, opts.Concurrency)
+	var wg sync.WaitGroup
+	for i, t := range techs {
+		wg.Add(1)
+		i, t := i, t
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				results[i] = techResult{t: t, err: ctx.Err()}
+				return
+			}
+			defer func() { <-sem }()
+			results[i] = runOne(ctx, t, target, runOpts, opts.PerTechniqueTimeout)
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
+// collectSeedIPs flattens the current candidate-IP map into a
+// deterministically-ordered slice of netip.Addr values for phase 2.
+// Order is not load-bearing, but a stable order keeps tests predictable.
+func collectSeedIPs(groups map[string]*ScoredIP) []netip.Addr {
+	seeds := make([]netip.Addr, 0, len(groups))
+	for ipStr := range groups {
+		a, err := netip.ParseAddr(ipStr)
+		if err != nil {
+			continue
+		}
+		seeds = append(seeds, a)
+	}
+	sort.Slice(seeds, func(i, j int) bool { return seeds[i].Less(seeds[j]) })
+	return seeds
+}
+
+// runOne runs a single technique under a child context with the per-
+// technique timeout, recovers from any panic the technique might throw, and
+// returns a normalized techResult.
+func runOne(
+	ctx context.Context, t techniques.Technique, target string,
+	opts techniques.RunOptions, timeout time.Duration,
+) (out techResult) {
 	out.t = t
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -283,7 +332,6 @@ func runOne(
 	}()
 	out.candidates, out.err = t.Run(tctx, target, opts)
 	if out.err != nil && errors.Is(out.err, context.DeadlineExceeded) {
-		// Surface DeadlineExceeded directly so reasonForErr maps it cleanly.
 		out.err = context.DeadlineExceeded
 	} else if out.err == nil && tctx.Err() != nil {
 		out.err = tctx.Err()
@@ -318,6 +366,8 @@ func reasonForErr(err error) string {
 		return "missing_api_key"
 	case errors.Is(err, techniques.ErrBudgetExhausted):
 		return "budget_exhausted"
+	case errors.Is(err, techniques.ErrTierInsufficient):
+		return "tier_insufficient"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
 	default:

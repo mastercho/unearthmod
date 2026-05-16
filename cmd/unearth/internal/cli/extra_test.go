@@ -36,22 +36,16 @@ func TestTableSink_Colorized(t *testing.T) {
 	}
 }
 
-func TestVerbose_AnnouncesCredentialStatusAndTierNotice(t *testing.T) {
+func TestVerbose_AnnouncesCredentialStatus(t *testing.T) {
 	withRunner(t, func(_ context.Context, target string, _ unearth.Options) (*unearth.Result, error) {
 		return fakeResult(target), nil
 	})
-	// --active selects a tier above passive; with no active techniques
-	// registered, verbose mode should print the "no techniques of that
-	// tier" notice.
 	code, _, stderr := captured(t, "--verbose", "--active", "example.test")
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	if !strings.Contains(stderr, "censys") || !strings.Contains(stderr, "shodan") {
 		t.Errorf("credential status not announced under --verbose:\n%s", stderr)
-	}
-	if !strings.Contains(stderr, "no techniques of that tier") {
-		t.Errorf("tier notice missing:\n%s", stderr)
 	}
 }
 

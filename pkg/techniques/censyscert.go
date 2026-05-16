@@ -3,6 +3,7 @@ package techniques
 import (
 	"bytes"
 	"context"
+	"crypto/sha1" // #nosec G505 — required by Shodan's ssl.cert.fingerprint filter, not used for security
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
@@ -77,8 +78,15 @@ type censysSearchResponse struct {
 }
 
 // tlsFingerprint is a function var so tests can stub it without standing
-// up a real TLS server.
+// up a real TLS server. It returns the SHA-256 of the target's leaf
+// certificate as lowercase hex.
 var tlsFingerprint = realTLSFingerprint
+
+// tlsFingerprintSHA1 returns the SHA-1 of the target's leaf certificate as
+// lowercase hex. Shodan's `ssl.cert.fingerprint` filter uses SHA-1 (unlike
+// Censys, which uses SHA-256), so shodan_cert needs this sibling. A
+// package var, like tlsFingerprint, so tests can stub it.
+var tlsFingerprintSHA1 = realTLSFingerprintSHA1
 
 func (censysCertTechnique) Run(ctx context.Context, target string, opts RunOptions) ([]Candidate, error) {
 	if opts.APIKeys.CensysPlatformPAT == "" {
@@ -152,6 +160,13 @@ func censysSearchPage(ctx context.Context, opts RunOptions, fp, pageToken string
 		return doc, fmt.Errorf("censys_cert: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		// 401/403 from the Platform search endpoint almost always means
+		// the PAT is valid but the account tier lacks the host-search
+		// capability (Free tier may not include it). Surface this as a
+		// tier_insufficient skip rather than a scary error.
+		return doc, fmt.Errorf("censys_cert: status %d: %w", resp.StatusCode, ErrTierInsufficient)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return doc, fmt.Errorf("censys_cert: %s status %d", censysPlatformSearchURL, resp.StatusCode)
 	}
@@ -186,6 +201,26 @@ func censysCandidates(doc censysSearchResponse, target, fp string) []Candidate {
 }
 
 func realTLSFingerprint(ctx context.Context, target string) (string, error) {
+	raw, err := leafCertDER(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func realTLSFingerprintSHA1(ctx context.Context, target string) (string, error) {
+	raw, err := leafCertDER(ctx, target)
+	if err != nil {
+		return "", err
+	}
+	sum := sha1.Sum(raw) // #nosec G401 — Shodan requires SHA-1 for ssl.cert.fingerprint
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// leafCertDER dials the target on :443 and returns the raw DER bytes of
+// its leaf certificate, so both fingerprint hash flavors share one dial.
+func leafCertDER(ctx context.Context, target string) ([]byte, error) {
 	d := tls.Dialer{
 		NetDialer: &net.Dialer{Timeout: 10 * time.Second},
 		Config: &tls.Config{
@@ -195,17 +230,16 @@ func realTLSFingerprint(ctx context.Context, target string) (string, error) {
 	}
 	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(target, "443"))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer func() { _ = conn.Close() }()
 	tc, ok := conn.(*tls.Conn)
 	if !ok {
-		return "", errors.New("tls handshake did not return *tls.Conn")
+		return nil, errors.New("tls handshake did not return *tls.Conn")
 	}
 	chain := tc.ConnectionState().PeerCertificates
 	if len(chain) == 0 {
-		return "", errors.New("peer presented no certificates")
+		return nil, errors.New("peer presented no certificates")
 	}
-	sum := sha256.Sum256(chain[0].Raw)
-	return hex.EncodeToString(sum[:]), nil
+	return chain[0].Raw, nil
 }

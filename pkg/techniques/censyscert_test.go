@@ -196,7 +196,7 @@ func TestCensys_HTTPError(t *testing.T) {
 	withStubFingerprint(t, "fp", nil)
 	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
 		"https://api.platform.censys.io/": func(*http.Request) (*http.Response, error) {
-			return stubResponse(401, ``), nil
+			return stubResponse(500, ``), nil
 		},
 	})
 	_, err := censysCertTechnique{}.Run(context.Background(), "x", RunOptions{
@@ -204,7 +204,42 @@ func TestCensys_HTTPError(t *testing.T) {
 		APIKeys:    APIKeys{CensysPlatformPAT: "pat"},
 	})
 	if err == nil {
-		t.Fatal("expected error on 401")
+		t.Fatal("expected error on 500")
+	}
+	if errors.Is(err, ErrTierInsufficient) {
+		t.Errorf("500 should not be tier_insufficient; got %v", err)
+	}
+}
+
+func TestCensys_TierInsufficient_403(t *testing.T) {
+	withStubFingerprint(t, "fp", nil)
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://api.platform.censys.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(403, ``), nil
+		},
+	})
+	_, err := censysCertTechnique{}.Run(context.Background(), "x", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    APIKeys{CensysPlatformPAT: "pat"},
+	})
+	if !errors.Is(err, ErrTierInsufficient) {
+		t.Fatalf("403 should produce ErrTierInsufficient, got %v", err)
+	}
+}
+
+func TestCensys_TierInsufficient_401(t *testing.T) {
+	withStubFingerprint(t, "fp", nil)
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://api.platform.censys.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(401, ``), nil
+		},
+	})
+	_, err := censysCertTechnique{}.Run(context.Background(), "x", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    APIKeys{CensysPlatformPAT: "pat"},
+	})
+	if !errors.Is(err, ErrTierInsufficient) {
+		t.Fatalf("401 should produce ErrTierInsufficient, got %v", err)
 	}
 }
 

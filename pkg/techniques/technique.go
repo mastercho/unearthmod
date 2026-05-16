@@ -6,6 +6,7 @@ package techniques
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"time"
 )
 
@@ -119,6 +120,23 @@ type RateLimiter interface {
 	Allow(key string) bool
 }
 
+// CandidateConsumer is an optional interface a technique may satisfy to
+// declare that it wants to run in a second phase, after the engine has
+// pooled the candidate IPs that every other technique produced. The
+// engine then sets RunOptions.SeedIPs to that pool before invoking
+// the technique's Run.
+//
+// Techniques that do not implement this interface (every Packet 1–4
+// technique) run in the first phase exactly as before, with SeedIPs
+// left nil — the engine change is fully additive.
+type CandidateConsumer interface {
+	Technique
+	// ConsumesCandidates reports whether the technique wants pooled
+	// seed IPs from the first phase. A method (not a marker) so a
+	// future technique can decide at runtime if it ever needs to.
+	ConsumesCandidates() bool
+}
+
 // RunOptions carries everything a technique needs to execute a single run.
 type RunOptions struct {
 	// HTTPClient is the shared client techniques should use for HTTP work.
@@ -141,6 +159,11 @@ type RunOptions struct {
 	// Refresh, when true, instructs techniques to ignore cached entries but
 	// still write fresh results back to the cache.
 	Refresh bool
+	// SeedIPs is the de-duplicated pool of candidate IPs that first-phase
+	// techniques produced during this run. The engine populates it only
+	// when invoking a CandidateConsumer in phase 2; for every other
+	// technique it is left nil.
+	SeedIPs []netip.Addr
 }
 
 // Technique is the extension point of unearth. Each technique is implemented
