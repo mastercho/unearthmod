@@ -1,0 +1,11 @@
+weights:
+  crtsh: 0.55
+  dns_history: 0.65
+  spf_mx: 0.50
+  subdomain_enum: 0.35
+  censys_cert: 0.90
+  shodan_cert: 0.85
+  host_header: 0.85
+  banner_grab: 0.45
+  error_page: 0.60
+  ipv6_probe: 0.70
