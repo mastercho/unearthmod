@@ -2,8 +2,15 @@ package unearth
 
 import (
 	"context"
+	"errors"
+	"math"
+	"net/http"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/unearth-tool/unearth/pkg/cdn"
+	"github.com/unearth-tool/unearth/pkg/rank"
 	"github.com/unearth-tool/unearth/pkg/techniques"
 )
 
@@ -23,18 +30,295 @@ func TestDefaultOptions(t *testing.T) {
 	}
 }
 
-func TestDiscoverStub(t *testing.T) {
-	res, err := Discover(context.Background(), "example.com", DefaultOptions())
+// fakeTech is a minimal in-memory technique driven by the test.
+type fakeTech struct {
+	name       string
+	weight     float64
+	tier       techniques.Tier
+	requiresK  bool
+	candidates []techniques.Candidate
+	err        error
+	delay      time.Duration
+	doPanic    bool
+	ranOnce    atomic.Int32
+}
+
+func (f *fakeTech) Name() string           { return f.name }
+func (f *fakeTech) Tier() techniques.Tier  { return f.tier }
+func (f *fakeTech) RequiresAPIKey() bool   { return f.requiresK }
+func (f *fakeTech) DefaultWeight() float64 { return f.weight }
+
+func (f *fakeTech) Run(ctx context.Context, _ string, _ techniques.RunOptions) ([]techniques.Candidate, error) {
+	f.ranOnce.Add(1)
+	if f.doPanic {
+		panic("kaboom")
+	}
+	if f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.candidates, nil
+}
+
+func withSelector(t *testing.T, techs ...techniques.Technique) {
+	t.Helper()
+	prev := techniqueSelector
+	techniqueSelector = func(maxTier techniques.Tier) []techniques.Technique {
+		var out []techniques.Technique
+		for _, x := range techs {
+			if x.Tier() <= maxTier {
+				out = append(out, x)
+			}
+		}
+		return out
+	}
+	// Also stub CDN detection so the test suite is fully offline.
+	prevDet := cdnDetect
+	cdnDetect = func(context.Context, string, *http.Client) (cdn.Detection, error) {
+		return cdn.Detection{}, nil
+	}
+	t.Cleanup(func() {
+		techniqueSelector = prev
+		cdnDetect = prevDet
+	})
+}
+
+func testOpts() Options {
+	o := DefaultOptions()
+	o.OverallTimeout = 5 * time.Second
+	o.PerTechniqueTimeout = 500 * time.Millisecond
+	o.NoCache = true
+	return o
+}
+
+func TestDiscover_BasicGroupingAndScoring(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "a", weight: 0.5, candidates: []techniques.Candidate{
+			{IP: "203.0.113.1", Evidence: "a-evidence"},
+		}},
+		&fakeTech{name: "b", weight: 0.5, candidates: []techniques.Candidate{
+			{IP: "203.0.113.1", Evidence: "b-evidence"},
+			{IP: "203.0.113.2", Evidence: "lone"},
+		}},
+	)
+	res, err := Discover(context.Background(), "example.test", testOpts())
 	if err != nil {
-		t.Fatalf("Discover returned error: %v", err)
+		t.Fatalf("Discover: %v", err)
 	}
-	if res == nil {
-		t.Fatal("Discover returned nil result")
+	if len(res.Candidates) != 2 {
+		t.Fatalf("Candidates: want 2, got %d (%+v)", len(res.Candidates), res.Candidates)
 	}
-	if res.Target != "example.com" {
-		t.Errorf("Result.Target = %q, want example.com", res.Target)
+	top := res.Candidates[0]
+	if top.IP != "203.0.113.1" {
+		t.Errorf("top IP: want .1, got %s", top.IP)
 	}
-	if res.Timestamp.IsZero() {
-		t.Error("Result.Timestamp not set")
+	if top.Corroboration != 2 {
+		t.Errorf("Corroboration: want 2, got %d", top.Corroboration)
+	}
+	if top.SingleSource {
+		t.Errorf("SingleSource should be false for 2-source hit")
+	}
+	wantScore := rank.Score([]float64{0.5, 0.5}) // 0.75
+	if math.Abs(top.Score-wantScore) > 1e-9 {
+		t.Errorf("Score: want %g, got %g", wantScore, top.Score)
+	}
+	lone := res.Candidates[1]
+	if lone.IP != "203.0.113.2" {
+		t.Errorf("lone IP: want .2, got %s", lone.IP)
+	}
+	if !lone.SingleSource || lone.Corroboration != 1 {
+		t.Errorf("lone: SingleSource=%v Corroboration=%d", lone.SingleSource, lone.Corroboration)
+	}
+	if math.Abs(lone.Score-0.5) > 1e-9 {
+		t.Errorf("lone Score: want 0.5, got %g", lone.Score)
+	}
+}
+
+func TestDiscover_SortOrder(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "a", weight: 0.3, candidates: []techniques.Candidate{
+			{IP: "203.0.113.10"}, {IP: "203.0.113.20"},
+		}},
+		&fakeTech{name: "b", weight: 0.9, candidates: []techniques.Candidate{
+			{IP: "203.0.113.20"}, // gets the higher-scoring hit
+		}},
+	)
+	res, _ := Discover(context.Background(), "x", testOpts())
+	if res.Candidates[0].IP != "203.0.113.20" {
+		t.Errorf("sort by score desc: want .20 first, got %s", res.Candidates[0].IP)
+	}
+	// Same-score tiebreak by IP asc — induce by giving both .30 and .40 only
+	// from technique 'a' with weight 0.3.
+	withSelector(t,
+		&fakeTech{name: "a", weight: 0.3, candidates: []techniques.Candidate{
+			{IP: "203.0.113.40"}, {IP: "203.0.113.30"},
+		}},
+	)
+	res, _ = Discover(context.Background(), "x", testOpts())
+	if res.Candidates[0].IP != "203.0.113.30" || res.Candidates[1].IP != "203.0.113.40" {
+		t.Errorf("tiebreak by IP asc: got %v", []string{res.Candidates[0].IP, res.Candidates[1].IP})
+	}
+}
+
+func TestDiscover_PerTechniqueTimeout(t *testing.T) {
+	slow := &fakeTech{name: "slow", weight: 0.5, delay: 5 * time.Second}
+	fast := &fakeTech{name: "fast", weight: 0.5, candidates: []techniques.Candidate{{IP: "203.0.113.5"}}}
+	withSelector(t, slow, fast)
+	opts := testOpts()
+	opts.PerTechniqueTimeout = 50 * time.Millisecond
+	start := time.Now()
+	res, _ := Discover(context.Background(), "x", opts)
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("per-tech timeout did not cut slow: %v", time.Since(start))
+	}
+	var foundSlow bool
+	for _, e := range res.Errors {
+		if e.Technique == "slow" {
+			foundSlow = true
+			if e.Reason != "timeout" {
+				t.Errorf("slow reason: want timeout, got %q (err %q)", e.Reason, e.Err)
+			}
+		}
+	}
+	if !foundSlow {
+		t.Error("slow technique should appear in Errors")
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].IP != "203.0.113.5" {
+		t.Errorf("fast technique should still produce its candidate, got %+v", res.Candidates)
+	}
+}
+
+func TestDiscover_MissingAPIKeySkipped(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "needs_key", weight: 0.9, requiresK: true},
+		&fakeTech{name: "open", weight: 0.5, candidates: []techniques.Candidate{{IP: "203.0.113.7"}}},
+	)
+	res, _ := Discover(context.Background(), "x", testOpts())
+	var skipped TechniqueErr
+	for _, e := range res.Errors {
+		if e.Technique == "needs_key" {
+			skipped = e
+		}
+	}
+	if skipped.Reason != "missing_api_key" {
+		t.Errorf("needs_key reason: want missing_api_key, got %q", skipped.Reason)
+	}
+	if len(res.Candidates) != 1 {
+		t.Errorf("open technique still produces results, got %d", len(res.Candidates))
+	}
+}
+
+func TestDiscover_PanicContained(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "boom", weight: 0.5, doPanic: true},
+		&fakeTech{name: "ok", weight: 0.5, candidates: []techniques.Candidate{{IP: "203.0.113.9"}}},
+	)
+	res, err := Discover(context.Background(), "x", testOpts())
+	if err != nil {
+		t.Fatalf("panic should not escape Discover: %v", err)
+	}
+	var boomErr TechniqueErr
+	for _, e := range res.Errors {
+		if e.Technique == "boom" {
+			boomErr = e
+		}
+	}
+	if boomErr.Err == "" {
+		t.Error("panicking technique should produce a TechniqueErr")
+	}
+	if len(res.Candidates) != 1 {
+		t.Errorf("non-panicking technique still works, got %d candidates", len(res.Candidates))
+	}
+}
+
+func TestDiscover_BudgetExhaustedReason(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "broke", weight: 0.5, err: techniques.ErrBudgetExhausted},
+	)
+	res, _ := Discover(context.Background(), "x", testOpts())
+	if len(res.Errors) != 1 || res.Errors[0].Reason != "budget_exhausted" {
+		t.Errorf("want budget_exhausted reason, got %+v", res.Errors)
+	}
+}
+
+func TestDiscover_ErrorsSortedByTechniqueName(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "zeta", weight: 0.5, err: errors.New("z")},
+		&fakeTech{name: "alpha", weight: 0.5, err: errors.New("a")},
+		&fakeTech{name: "mike", weight: 0.5, err: errors.New("m")},
+	)
+	res, _ := Discover(context.Background(), "x", testOpts())
+	if len(res.Errors) != 3 {
+		t.Fatalf("want 3 errors, got %d", len(res.Errors))
+	}
+	want := []string{"alpha", "mike", "zeta"}
+	for i, w := range want {
+		if res.Errors[i].Technique != w {
+			t.Errorf("Errors[%d]: want %s, got %s", i, w, res.Errors[i].Technique)
+		}
+	}
+}
+
+func TestDiscover_ConcurrencyBoundRespected(t *testing.T) {
+	var live, peak atomic.Int64
+	makeTech := func(name string) *fakeTech {
+		return &fakeTech{
+			name:   name,
+			weight: 0.5,
+			delay:  40 * time.Millisecond,
+		}
+	}
+	tech := func(name string) *fakeTech {
+		f := makeTech(name)
+		f.candidates = []techniques.Candidate{{IP: "203.0.113." + name}}
+		return f
+	}
+	_ = tech
+	// Use a wrapper that bumps live/peak around Run.
+	wrap := func(name string) techniques.Technique {
+		return &countingTech{fakeTech: fakeTech{name: name, weight: 0.5, delay: 40 * time.Millisecond}, live: &live, peak: &peak}
+	}
+	withSelector(t, wrap("a"), wrap("b"), wrap("c"), wrap("d"))
+	opts := testOpts()
+	opts.Concurrency = 2
+	opts.PerTechniqueTimeout = 2 * time.Second
+	_, _ = Discover(context.Background(), "x", opts)
+	if peak.Load() > 2 {
+		t.Errorf("concurrency bound violated: peak %d > 2", peak.Load())
+	}
+}
+
+type countingTech struct {
+	fakeTech
+	live, peak *atomic.Int64
+}
+
+func (c *countingTech) Run(ctx context.Context, target string, opts techniques.RunOptions) ([]techniques.Candidate, error) {
+	n := c.live.Add(1)
+	defer c.live.Add(-1)
+	for {
+		p := c.peak.Load()
+		if n <= p || c.peak.CompareAndSwap(p, n) {
+			break
+		}
+	}
+	return c.fakeTech.Run(ctx, target, opts)
+}
+
+func TestDiscover_ContextAlreadyCancelled(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "n", weight: 0.5, candidates: []techniques.Candidate{{IP: "203.0.113.5"}}},
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := Discover(ctx, "x", testOpts())
+	if err == nil {
+		t.Error("expected engine error on pre-cancelled context")
 	}
 }

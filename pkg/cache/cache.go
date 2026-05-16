@@ -20,8 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/unearth-tool/unearth/pkg/techniques"
-
 	_ "modernc.org/sqlite"
 )
 
@@ -37,9 +35,9 @@ type Cache struct {
 	writeM sync.Mutex
 }
 
-// Compile-time assertion that *Cache satisfies the techniques.CacheStore
-// contract. This must compile.
-var _ techniques.CacheStore = (*Cache)(nil)
+// The compile-time assertion that *Cache satisfies techniques.CacheStore is
+// kept in an external test package (cache_test) — see interface_test.go —
+// to avoid a real import cycle once techniques.Run depends on cache.Key.
 
 // Open opens or creates the cache at the given path. Pass "" for the default
 // XDG path ($XDG_CACHE_HOME/unearth/cache.db, falling back to

@@ -80,6 +80,20 @@ type CacheStore interface {
 	Set(key string, value []byte, ttl time.Duration) error
 }
 
+// BudgetCharger is the contract the per-invocation paid-API budget
+// (internal/ratelimit.Budget) satisfies. Techniques depend on this interface
+// so this package never imports internal/ratelimit, which would form a
+// cycle (ratelimit imports BudgetCaps from here).
+type BudgetCharger interface {
+	// Charge attempts to consume one call against the named service budget
+	// ("censys", "shodan", "securitytrails"). It returns false when the
+	// budget is exhausted; the caller is then expected to stop and return
+	// ErrBudgetExhausted.
+	Charge(service string) bool
+	// Remaining reports calls left for a service. -1 means unlimited.
+	Remaining(service string) int
+}
+
 // RateLimiter is the contract the rate limiter (Packet 2) satisfies.
 type RateLimiter interface {
 	// Wait blocks until a call keyed by key is permitted or ctx is done.
@@ -101,6 +115,11 @@ type RunOptions struct {
 	RateLimiter RateLimiter
 	// BudgetCaps limits paid-API usage for this invocation.
 	BudgetCaps BudgetCaps
+	// Budget is the live per-invocation paid-API budget. Techniques that
+	// call paid services must Charge it before every request and return
+	// ErrBudgetExhausted when Charge reports false. It may be nil only when
+	// no paid techniques are selected for the run.
+	Budget BudgetCharger
 	// NoCache, when true, instructs techniques to bypass the cache entirely.
 	NoCache bool
 	// Refresh, when true, instructs techniques to ignore cached entries but
