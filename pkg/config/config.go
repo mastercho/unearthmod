@@ -24,6 +24,7 @@ var defaultWeightsYAML []byte
 // not an error.
 var knownTechniques = map[string]struct{}{
 	"crtsh":          {},
+	"ct_fingerprint": {},
 	"dns_history":    {},
 	"spf_mx":         {},
 	"subdomain_enum": {},

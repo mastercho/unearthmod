@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/unearth-tool/unearth/pkg/techniques"
 )
@@ -134,7 +135,7 @@ func TestDiscover_ConsumerStillBoundByPerTechniqueTimeout(t *testing.T) {
 	slow := &consumerFake{
 		fakeTech: fakeTech{
 			name: "slow-consumer", weight: 0.5, tier: techniques.TierActive,
-			delay: 5 * 1000 * 1000 * 1000, // 5s
+			delay: 5 * time.Second,
 		},
 		consumes: true,
 	}
@@ -144,7 +145,7 @@ func TestDiscover_ConsumerStillBoundByPerTechniqueTimeout(t *testing.T) {
 	)
 	opts := testOpts()
 	opts.Tier = techniques.TierActive
-	opts.PerTechniqueTimeout = 50 * 1000 * 1000 // 50ms
+	opts.PerTechniqueTimeout = 50 * time.Millisecond
 	res, _ := Discover(context.Background(), "x", opts)
 	foundTimeout := false
 	for _, e := range res.Errors {
@@ -154,6 +155,100 @@ func TestDiscover_ConsumerStillBoundByPerTechniqueTimeout(t *testing.T) {
 	}
 	if !foundTimeout {
 		t.Errorf("phase-2 timeout not surfaced: %+v", res.Errors)
+	}
+}
+
+// timeoutOverrider satisfies techniques.TimeoutOverrider.
+type timeoutOverrider struct {
+	fakeTech
+	override time.Duration
+}
+
+func (o *timeoutOverrider) TimeoutOverride() time.Duration { return o.override }
+
+func TestDiscover_TimeoutOverride_LongerWins(t *testing.T) {
+	// Technique sleeps 60ms; default per-technique is 20ms (would kill it);
+	// override is 300ms (enough). Override must win.
+	tech := &timeoutOverrider{
+		fakeTech: fakeTech{
+			name: "slow-with-override", weight: 0.5,
+			delay:      60 * time.Millisecond,
+			candidates: []techniques.Candidate{{IP: "203.0.113.42"}},
+		},
+		override: 300 * time.Millisecond,
+	}
+	withSelector(t, tech)
+	opts := testOpts()
+	opts.PerTechniqueTimeout = 20 * time.Millisecond
+	opts.OverallTimeout = 5 * time.Second
+	res, _ := Discover(context.Background(), "x", opts)
+	if len(res.Candidates) != 1 || res.Candidates[0].IP != "203.0.113.42" {
+		t.Errorf("override should have kept the technique alive, got %+v / errors=%+v",
+			res.Candidates, res.Errors)
+	}
+}
+
+func TestDiscover_TimeoutOverride_NeverShortensBudget(t *testing.T) {
+	// Override (10ms) is SHORTER than the configured PerTechniqueTimeout
+	// (500ms). The engine must keep the longer 500ms — overrides only widen.
+	tech := &timeoutOverrider{
+		fakeTech: fakeTech{
+			name: "fast-with-tiny-override", weight: 0.5,
+			delay:      100 * time.Millisecond,
+			candidates: []techniques.Candidate{{IP: "203.0.113.43"}},
+		},
+		override: 10 * time.Millisecond,
+	}
+	withSelector(t, tech)
+	opts := testOpts()
+	opts.PerTechniqueTimeout = 500 * time.Millisecond
+	res, _ := Discover(context.Background(), "x", opts)
+	if len(res.Candidates) != 1 {
+		t.Errorf("tiny override must not shorten budget, got %+v / %+v", res.Candidates, res.Errors)
+	}
+}
+
+func TestDiscover_TimeoutOverride_StillBoundedByOverall(t *testing.T) {
+	// OverallTimeout is small enough that even the technique's override
+	// can't save it. The technique must still time out.
+	tech := &timeoutOverrider{
+		fakeTech: fakeTech{
+			name: "slow", weight: 0.5,
+			delay: 2 * time.Second,
+		},
+		override: 10 * time.Second, // would normally allow this
+	}
+	withSelector(t, tech)
+	opts := testOpts()
+	opts.PerTechniqueTimeout = 1 * time.Second
+	opts.OverallTimeout = 100 * time.Millisecond
+	res, _ := Discover(context.Background(), "x", opts)
+	foundTimeout := false
+	for _, e := range res.Errors {
+		if e.Reason == "timeout" {
+			foundTimeout = true
+		}
+	}
+	if !foundTimeout {
+		t.Errorf("overall timeout should bound an override; got errors=%+v", res.Errors)
+	}
+}
+
+func TestDiscover_ExistingTechniquesUnaffectedByTimeoutSupport(t *testing.T) {
+	// A plain fakeTech that does NOT implement TimeoutOverrider must
+	// behave identically to Packet 5A: gets the configured default.
+	tech := &fakeTech{
+		name: "plain", weight: 0.5,
+		delay:      30 * time.Millisecond,
+		candidates: []techniques.Candidate{{IP: "203.0.113.44"}},
+	}
+	withSelector(t, tech)
+	opts := testOpts()
+	opts.PerTechniqueTimeout = 100 * time.Millisecond
+	res, _ := Discover(context.Background(), "x", opts)
+	if len(res.Candidates) != 1 {
+		t.Errorf("non-overrider should still produce its candidate, got %+v / %+v",
+			res.Candidates, res.Errors)
 	}
 }
 

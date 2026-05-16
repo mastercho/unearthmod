@@ -26,7 +26,10 @@ import (
 
 func TestE2E_DiscoverExampleCom(t *testing.T) {
 	opts := DefaultOptions()
-	opts.OverallTimeout = 90 * time.Second
+	// Generous overall budget — ct_fingerprint's TimeoutOverride is 2m and
+	// crtsh's is 90s; an honest passive run needs room for both. Past 5m
+	// is a real problem.
+	opts.OverallTimeout = 5 * time.Minute
 	opts.PerTechniqueTimeout = 30 * time.Second
 	opts.NoCache = true
 

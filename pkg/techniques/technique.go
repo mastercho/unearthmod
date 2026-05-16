@@ -120,6 +120,18 @@ type RateLimiter interface {
 	Allow(key string) bool
 }
 
+// TimeoutOverrider is an optional interface. A technique that needs longer
+// than the engine's default PerTechniqueTimeout may implement it to declare
+// a per-technique ceiling. The engine uses the larger of the override and
+// the configured PerTechniqueTimeout — an override never shortens a
+// technique's budget below the global default. The OverallTimeout still
+// bounds the run: the per-technique budget is clamped to the remaining
+// overall budget, so a slow technique cannot run past the global deadline.
+type TimeoutOverrider interface {
+	Technique
+	TimeoutOverride() time.Duration
+}
+
 // CandidateConsumer is an optional interface a technique may satisfy to
 // declare that it wants to run in a second phase, after the engine has
 // pooled the candidate IPs that every other technique produced. The

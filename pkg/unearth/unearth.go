@@ -291,11 +291,26 @@ func runBatch(
 				return
 			}
 			defer func() { <-sem }()
-			results[i] = runOne(ctx, t, target, runOpts, opts.PerTechniqueTimeout)
+			results[i] = runOne(ctx, t, target, runOpts, techniqueTimeout(t, opts.PerTechniqueTimeout))
 		}()
 	}
 	wg.Wait()
 	return results
+}
+
+// techniqueTimeout resolves the per-technique deadline budget for one
+// technique. The default is the engine's global PerTechniqueTimeout; a
+// technique that implements techniques.TimeoutOverrider widens the
+// budget to max(global, override). The overall-run deadline still bounds
+// the resulting child context — that clamp happens later in runOne
+// because only there do we have the parent context's remaining budget.
+func techniqueTimeout(t techniques.Technique, defaultTimeout time.Duration) time.Duration {
+	if to, ok := t.(techniques.TimeoutOverrider); ok {
+		if override := to.TimeoutOverride(); override > defaultTimeout {
+			return override
+		}
+	}
+	return defaultTimeout
 }
 
 // collectSeedIPs flattens the current candidate-IP map into a
