@@ -17,4 +17,3 @@ func isTTY(w any) bool {
 	}
 	return (st.Mode() & os.ModeCharDevice) != 0
 }
-
