@@ -53,7 +53,7 @@ make test       # runs the test suite
 make lint       # runs golangci-lint
 ```
 
-Requires Go 1.22 or newer.
+Requires Go 1.23 or newer.
 
 ## License
 

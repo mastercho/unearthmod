@@ -1,6 +1,6 @@
 module github.com/unearth-tool/unearth
 
-go 1.23.0
+go 1.23
 
 require (
 	golang.org/x/time v0.5.0
