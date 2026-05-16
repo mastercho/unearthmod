@@ -1,15 +1,16 @@
-// Command unearth is the CLI for origin-IP discovery.
-//
-// The full CLI -- flags, input modes and output formats -- is implemented in
-// Packet 4. This stub keeps the build honest until then.
+// Command unearth is the CLI entrypoint. main is intentionally tiny: it
+// builds the root cobra command and runs it, and lets a non-zero exit code
+// from the command tree propagate. Every interesting behavior lives in the
+// internal/cli package so it can be driven from tests without forking a
+// real process.
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/unearth-tool/unearth/cmd/unearth/internal/cli"
 )
 
 func main() {
-	fmt.Fprintln(os.Stderr, "unearth: CLI not yet implemented -- see Packet 4")
-	os.Exit(1)
+	os.Exit(cli.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

@@ -167,8 +167,6 @@ func TestWeights_ZeroValue(t *testing.T) {
 
 func TestLoadAPIKeys(t *testing.T) {
 	t.Setenv("UNEARTH_CENSYS_PAT", "pat-tok")
-	t.Setenv("UNEARTH_CENSYS_API_ID", "id-x")
-	t.Setenv("UNEARTH_CENSYS_API_SECRET", "secret-x")
 	t.Setenv("UNEARTH_SHODAN_API_KEY", "sho")
 	t.Setenv("UNEARTH_SECURITYTRAILS_API_KEY", "st")
 	t.Setenv("UNEARTH_VIEWDNS_API_KEY", "vd")
@@ -176,22 +174,18 @@ func TestLoadAPIKeys(t *testing.T) {
 	if k.CensysPlatformPAT != "pat-tok" {
 		t.Errorf("censys PAT: %+v", k)
 	}
-	if k.CensysAPIID != "id-x" || k.CensysAPISecret != "secret-x" {
-		t.Errorf("legacy censys (still loaded for deprecation window): %+v", k)
-	}
 	if k.ShodanAPIKey != "sho" || k.SecurityTrailsKey != "st" || k.ViewDNSKey != "vd" {
 		t.Errorf("misc: %+v", k)
 	}
 }
 
 func TestLoadAPIKeys_EmptyEnv(t *testing.T) {
-	t.Setenv("UNEARTH_CENSYS_API_ID", "")
-	t.Setenv("UNEARTH_CENSYS_API_SECRET", "")
+	t.Setenv("UNEARTH_CENSYS_PAT", "")
 	t.Setenv("UNEARTH_SHODAN_API_KEY", "")
 	t.Setenv("UNEARTH_SECURITYTRAILS_API_KEY", "")
 	t.Setenv("UNEARTH_VIEWDNS_API_KEY", "")
 	k := LoadAPIKeys()
-	if k.CensysAPIID != "" || k.ShodanAPIKey != "" {
+	if k.CensysPlatformPAT != "" || k.ShodanAPIKey != "" {
 		t.Errorf("expected empty fields, got %+v", k)
 	}
 }

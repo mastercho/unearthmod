@@ -48,11 +48,13 @@ func TestCensys_MissingPAT(t *testing.T) {
 	if !errors.Is(err, ErrMissingAPIKey) {
 		t.Fatalf("want ErrMissingAPIKey, got %v", err)
 	}
-	// Legacy ID/secret without PAT must also be treated as missing.
+	// Empty PAT alone is still ErrMissingAPIKey — covers the "only legacy
+	// creds were set" scenario (legacy creds are intentionally not
+	// referenced here so this test does not depend on deprecated fields).
 	_, err = censysCertTechnique{}.Run(context.Background(), "x",
-		RunOptions{APIKeys: APIKeys{CensysAPIID: "id", CensysAPISecret: "sec"}})
+		RunOptions{APIKeys: APIKeys{CensysPlatformPAT: ""}})
 	if !errors.Is(err, ErrMissingAPIKey) {
-		t.Fatalf("legacy creds without PAT should still be ErrMissingAPIKey, got %v", err)
+		t.Fatalf("empty PAT should be ErrMissingAPIKey, got %v", err)
 	}
 }
 

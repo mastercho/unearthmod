@@ -39,6 +39,10 @@ type Options struct {
 	PerTechniqueTimeout time.Duration
 	// OverallTimeout bounds the whole discovery run.
 	OverallTimeout time.Duration
+	// WeightsPath optionally points at a YAML file of technique-weight
+	// overrides. Empty string preserves the default behavior of consulting
+	// only the embedded defaults plus the XDG-default user file.
+	WeightsPath string
 }
 
 // DefaultOptions returns Options with conservative defaults: passive tier only,
@@ -116,7 +120,7 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 	result := &Result{Target: target}
 
 	// Weights (and any unknown-technique warnings).
-	weights, warns, err := config.LoadWeights("")
+	weights, warns, err := config.LoadWeights(opts.WeightsPath)
 	if err != nil {
 		result.Warnings = append(result.Warnings, "config: "+err.Error())
 	}
