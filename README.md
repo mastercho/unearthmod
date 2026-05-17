@@ -4,7 +4,7 @@
 
 `unearth` discovers the real origin IP hidden behind a CDN — Cloudflare,
 CloudFront, and others — by running multiple recon techniques in parallel and
-ranking candidate IPs by how many techniques independently agree.
+ranking candidate IPs by how many techniques independently agree
 
 ## 🚧 Status
 
