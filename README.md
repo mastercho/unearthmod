@@ -58,3 +58,4 @@ Requires Go 1.23 or newer.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
