@@ -11,9 +11,10 @@ import (
 	"time"
 )
 
-// Version is the unearth release the User-Agent advertises. Update in
-// lockstep with the release process.
-const Version = "0.1.0-dev"
+// Version is the unearth release the User-Agent advertises. GoReleaser
+// injects the real tag at build time via ldflags; the default is the dev
+// sentinel used for local builds.
+var Version = "0.1.0-dev"
 
 // Options configures the shared client. The zero value is usable: it expands
 // to sensible defaults via New.

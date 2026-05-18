@@ -1,5 +1,3 @@
-# GoReleaser configuration. The release workflow is wired up in Packet 6;
-# this file exists so the release pipeline has a valid base to build on.
 version: 2
 
 project_name: unearth
@@ -14,6 +12,8 @@ builds:
     binary: unearth
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/unearth-tool/unearth/internal/httpclient.Version={{ .Version }}
     goos:
       - linux
       - darwin
@@ -25,6 +25,8 @@ builds:
     binary: unearth-mcp
     env:
       - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X github.com/unearth-tool/unearth/internal/httpclient.Version={{ .Version }}
     goos:
       - linux
       - darwin
@@ -44,5 +46,13 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+changelog:
+  source:
+    use: github
+  use: github
+
 release:
-  draft: true
+  draft: false
+  name_template: "unearth {{ .Tag }}"
+  header: |
+    See [CHANGELOG.md](https://github.com/bugsyhewitt/unearth/blob/main/CHANGELOG.md) for full release notes.
