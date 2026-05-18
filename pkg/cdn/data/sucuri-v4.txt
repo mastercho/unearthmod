@@ -1,0 +1,7 @@
+# Sucuri WAF IPv4 ranges — https://docs.sucuri.net/website-firewall/sucuri-firewall-troubleshooting-guide/
+# Fetched 2026-05-17; AS30148
+# These are small and stable; source is Sucuri's published troubleshooting docs.
+192.88.134.0/23
+185.93.228.0/22
+66.248.200.0/22
+208.109.0.0/22

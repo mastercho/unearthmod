@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
 	"testing"
 )
 
@@ -20,6 +21,8 @@ func TestRefresh_RebuildsFromCustomSources(t *testing.T) {
                 "prefixes":[{"ip_prefix":"192.0.2.0/24","service":"CLOUDFRONT"}],
                 "ipv6_prefixes":[]
             }`))
+		case "/fastly-list.json":
+			_, _ = w.Write([]byte(`{"addresses":["100.64.0.0/10"],"ipv6_addresses":[]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -30,17 +33,22 @@ func TestRefresh_RebuildsFromCustomSources(t *testing.T) {
 	prevProviders := providers
 	t.Cleanup(func() { providers = prevProviders })
 
-	rt := &rewriteTransport{base: http.DefaultTransport, target: srv.URL}
-	hc := &http.Client{Transport: rt}
-
-	if err := Refresh(context.Background(), hc); err != nil {
-		t.Fatalf("Refresh: %v", err)
+	if err := RefreshFrom(context.Background(), nil, refreshURLs{
+		cloudflareV4: srv.URL + "/ips-v4",
+		cloudflareV6: srv.URL + "/ips-v6",
+		cloudfront:   srv.URL + "/ip-ranges.json",
+		fastly:       srv.URL + "/fastly-list.json",
+	}); err != nil {
+		t.Fatalf("RefreshFrom: %v", err)
 	}
 	if !IsCDNIP(netip.MustParseAddr("198.51.100.5")) {
 		t.Error("198.51.100.5 should be in refreshed Cloudflare range")
 	}
 	if !IsCDNIP(netip.MustParseAddr("192.0.2.5")) {
 		t.Error("192.0.2.5 should be in refreshed CloudFront range")
+	}
+	if !IsCDNIP(netip.MustParseAddr("100.64.0.1")) {
+		t.Error("100.64.0.1 should be in refreshed Fastly range")
 	}
 }
 
@@ -49,31 +57,46 @@ func TestRefresh_HTTPError(t *testing.T) {
 		http.Error(w, "boom", 500)
 	}))
 	defer srv.Close()
-	rt := &rewriteTransport{base: http.DefaultTransport, target: srv.URL}
-	hc := &http.Client{Transport: rt}
-	if err := Refresh(context.Background(), hc); err == nil {
+	if err := RefreshFrom(context.Background(), nil, refreshURLs{
+		cloudflareV4: srv.URL + "/ips-v4",
+		cloudflareV6: srv.URL + "/ips-v6",
+		cloudfront:   srv.URL + "/ip-ranges.json",
+		fastly:       srv.URL + "/fastly.json",
+	}); err == nil {
 		t.Fatal("expected error from 500 response")
 	}
 }
 
-// rewriteTransport rewrites every outbound URL's host to point at the test
-// server's address so Refresh's hard-coded URLs can be redirected.
-type rewriteTransport struct {
-	base   http.RoundTripper
-	target string // e.g. "http://127.0.0.1:PORT"
-}
+func TestLoadCachedRefresh_FreshFilePreferredOverEmbedded(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
 
-func (r *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Map the well-known paths Refresh uses to test server paths.
-	clone := req.Clone(req.Context())
-	switch req.URL.Path {
-	case "/ips-v4":
-		clone.URL, _ = clone.URL.Parse(r.target + "/ips-v4")
-	case "/ips-v6":
-		clone.URL, _ = clone.URL.Parse(r.target + "/ips-v6")
-	default:
-		clone.URL, _ = clone.URL.Parse(r.target + "/ip-ranges.json")
+	cacheDir := dir + "/unearth/cdn"
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
 	}
-	clone.Host = clone.URL.Host
-	return r.base.RoundTrip(clone)
+	// Write test range files; these represent a hypothetical fresh refresh.
+	// 203.0.113.0/24 (TEST-NET-3) is not in the embedded snapshot, so if
+	// LoadCachedRefresh loads the cache, IsCDNIP will return true for it.
+	files := map[string][]byte{
+		cacheDir + "/cloudflare-v4.txt": []byte("203.0.113.0/24\n"),
+		cacheDir + "/cloudflare-v6.txt": []byte("2001:db8::/32\n"),
+		cacheDir + "/cloudfront.json":   []byte(`{"prefixes":[{"ip_prefix":"192.0.2.0/24","service":"CLOUDFRONT"}],"ipv6_prefixes":[]}`),
+		cacheDir + "/fastly-list.json":  []byte(`{"addresses":[],"ipv6_addresses":[]}`),
+	}
+	for path, data := range files {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	prevProviders := providers
+	t.Cleanup(func() { providers = prevProviders })
+
+	if err := LoadCachedRefresh(); err != nil {
+		t.Fatalf("LoadCachedRefresh: %v", err)
+	}
+	if !IsCDNIP(netip.MustParseAddr("203.0.113.5")) {
+		t.Error("203.0.113.5 should be CDN after loading the test cache")
+	}
 }

@@ -1,0 +1,4 @@
+# Fastly CDN IPv6 ranges — https://api.fastly.com/public-ip-list
+# Fetched 2026-05-17
+2a04:4e40::/32
+2a04:4e42::/32

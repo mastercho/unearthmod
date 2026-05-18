@@ -1,0 +1,3 @@
+# Sucuri WAF IPv6 ranges — https://docs.sucuri.net/website-firewall/sucuri-firewall-troubleshooting-guide/
+# Fetched 2026-05-17; AS30148
+2a02:fe80::/29

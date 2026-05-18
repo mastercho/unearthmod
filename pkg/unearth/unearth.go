@@ -419,3 +419,67 @@ func hasKeyFor(name string, k techniques.APIKeys) bool {
 		return false
 	}
 }
+
+// RunTechnique runs a single named technique and returns its raw candidates.
+// It is the helper used by the MCP server's single-technique tool calls.
+// The full Discover pipeline is not run — no CDN detection, no ranking.
+//
+// seedIPs provides the candidate IP pool for phase-2 consumer techniques
+// (e.g. host_header). For phase-1 techniques, seedIPs is ignored.
+// Each element must be a valid IP address string; invalid strings are silently
+// dropped.
+//
+// If the named technique is not registered, RunTechnique returns an error.
+// If the technique requires an API key that is absent from opts.APIKeys, it
+// returns a descriptive error.
+func RunTechnique(ctx context.Context, name string, target string, opts Options, seedIPs []string) ([]techniques.Candidate, error) {
+	t, ok := techniques.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("technique %q not registered", name)
+	}
+
+	opts = withDefaults(opts)
+
+	if t.RequiresAPIKey() && !hasKeyFor(name, opts.APIKeys) {
+		return nil, fmt.Errorf("technique %q requires an API key (missing_api_key)", name)
+	}
+
+	var cstore techniques.CacheStore
+	if !opts.NoCache {
+		if c, err := cache.Open(""); err == nil {
+			cstore = c
+			defer func() { _ = c.Close() }()
+		}
+	}
+	hc := httpclient.New(httpclient.Options{})
+	limiter := ratelimit.NewLimiter(map[string]ratelimit.EndpointConfig{
+		"crtsh": {RPS: 0.5, Burst: 2},
+		"dns":   {RPS: 20, Burst: 20},
+	})
+
+	var seedAddrs []netip.Addr
+	for _, s := range seedIPs {
+		if a, err := netip.ParseAddr(s); err == nil {
+			seedAddrs = append(seedAddrs, a.Unmap())
+		}
+	}
+
+	timeout := techniqueTimeout(t, opts.PerTechniqueTimeout)
+	if opts.OverallTimeout > 0 && opts.OverallTimeout < timeout {
+		timeout = opts.OverallTimeout
+	}
+	tCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	runOpts := techniques.RunOptions{
+		Cache:       cstore,
+		HTTPClient:  hc,
+		RateLimiter: limiter,
+		APIKeys:     opts.APIKeys,
+		BudgetCaps:  opts.BudgetCaps,
+		NoCache:     opts.NoCache,
+		Refresh:     opts.Refresh,
+		SeedIPs:     seedAddrs,
+	}
+	return t.Run(tCtx, target, runOpts)
+}

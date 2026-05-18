@@ -199,3 +199,111 @@ func TestSnapshotDateNonEmpty(t *testing.T) {
 		t.Error("SnapshotDate constant should record when ranges were captured")
 	}
 }
+
+// ── Fastly ────────────────────────────────────────────────────────────────────
+
+func TestIsCDNIP_Fastly(t *testing.T) {
+	// 151.101.0.0/16 is in the embedded Fastly snapshot.
+	addr := netip.MustParseAddr("151.101.1.1")
+	if !IsCDNIP(addr) {
+		t.Errorf("151.101.1.1 should be Fastly CDN IP")
+	}
+	if got := ProviderForIP(addr); got != "fastly" {
+		t.Errorf("ProviderForIP(151.101.1.1) = %q, want fastly", got)
+	}
+}
+
+func TestIsCDNIP_FastlyRange2(t *testing.T) {
+	// 199.232.0.0/16 is another embedded Fastly range.
+	addr := netip.MustParseAddr("199.232.100.50")
+	if !IsCDNIP(addr) {
+		t.Errorf("199.232.100.50 should be Fastly CDN IP")
+	}
+	if got := ProviderForIP(addr); got != "fastly" {
+		t.Errorf("ProviderForIP(199.232.100.50) = %q, want fastly", got)
+	}
+}
+
+func TestProviderByDNS_Fastly(t *testing.T) {
+	cases := map[string]string{
+		"foo.fastly.net":   "fastly",
+		"bar.fastlylb.net": "fastly",
+	}
+	for host, want := range cases {
+		got, _ := providerByDNS(host)
+		if got != want {
+			t.Errorf("providerByDNS(%s) = %q, want %q", host, got, want)
+		}
+	}
+}
+
+// ── Sucuri ────────────────────────────────────────────────────────────────────
+
+func TestIsCDNIP_Sucuri(t *testing.T) {
+	// 192.88.134.0/23 is the first embedded Sucuri range.
+	addr := netip.MustParseAddr("192.88.134.5")
+	if !IsCDNIP(addr) {
+		t.Errorf("192.88.134.5 should be Sucuri CDN IP")
+	}
+	if got := ProviderForIP(addr); got != "sucuri" {
+		t.Errorf("ProviderForIP(192.88.134.5) = %q, want sucuri", got)
+	}
+}
+
+func TestIsCDNIP_Sucuri_IPv6(t *testing.T) {
+	// 2a02:fe80::/29 is the embedded Sucuri IPv6 range.
+	addr := netip.MustParseAddr("2a02:fe80::1")
+	if !IsCDNIP(addr) {
+		t.Errorf("2a02:fe80::1 should be Sucuri CDN IP")
+	}
+}
+
+func TestProviderByDNS_Sucuri(t *testing.T) {
+	got, _ := providerByDNS("site.sucuri.net")
+	if got != "sucuri" {
+		t.Errorf("providerByDNS(site.sucuri.net) = %q, want sucuri", got)
+	}
+}
+
+// ── classifyHeaders additions ─────────────────────────────────────────────────
+
+func TestClassifyHeaders_Fastly(t *testing.T) {
+	h := http.Header{}
+	h.Set("X-Fastly-Request-Id", "abc123") // canonical MIME form
+	if got := classifyHeaders(h); got != "fastly" {
+		t.Errorf("classifyHeaders with x-fastly-request-id = %q, want fastly", got)
+	}
+}
+
+func TestClassifyHeaders_Sucuri(t *testing.T) {
+	h := http.Header{"X-Sucuri-Cache": []string{"HIT"}}
+	if got := classifyHeaders(h); got != "sucuri" {
+		t.Errorf("classifyHeaders with x-sucuri-cache = %q, want sucuri", got)
+	}
+}
+
+// ── parseFastlyJSON ───────────────────────────────────────────────────────────
+
+func TestParseFastlyJSON_Happy(t *testing.T) {
+	data := []byte(`{"addresses":["1.2.3.0/24"],"ipv6_addresses":["2a04:4e40::/32"]}`)
+	prefs, err := parseFastlyJSON(data)
+	if err != nil {
+		t.Fatalf("parseFastlyJSON: %v", err)
+	}
+	if len(prefs) != 2 {
+		t.Errorf("expected 2 prefixes, got %d", len(prefs))
+	}
+}
+
+func TestParseFastlyJSON_Malformed(t *testing.T) {
+	if _, err := parseFastlyJSON([]byte("not json")); err == nil {
+		t.Error("expected error on bad JSON")
+	}
+}
+
+func TestParseFastlyJSON_BadPrefix(t *testing.T) {
+	data := []byte(`{"addresses":["not-a-cidr"],"ipv6_addresses":[]}`)
+	if _, err := parseFastlyJSON(data); err == nil {
+		t.Error("expected error on non-CIDR string")
+	}
+}

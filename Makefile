@@ -35,6 +35,6 @@ install:
 clean:
 	rm -rf $(DIST) coverage.out
 
-# mcp target is wired in Packet 6
 mcp:
-	@echo "unearth-mcp target reserved for Packet 6"
+	@mkdir -p $(DIST)
+	CGO_ENABLED=0 go build -o $(DIST)/unearth-mcp ./cmd/unearth-mcp

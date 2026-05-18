@@ -4,10 +4,9 @@
 // status to the caller; techniques drop candidates that are still inside a
 // CDN, because they cannot be the real origin.
 //
-// CDN coverage in v1.0: Cloudflare and CloudFront. The code is structured so
-// adding Akamai, Fastly, or Sucuri later is a matter of dropping in a
-// Provider value with detection markers and an embedded range snapshot —
-// not a rewrite.
+// CDN coverage in v1.0: Cloudflare, CloudFront, Fastly, and Sucuri.
+// The code is structured so adding further providers is a matter of dropping
+// in a Provider value with detection markers and an embedded range snapshot.
 package cdn
 
 import (
@@ -20,13 +19,18 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
-// SnapshotDate records when the embedded Cloudflare and CloudFront range
-// data was captured. Refresh callers can compare against this to decide
-// whether to fetch fresh ranges.
-const SnapshotDate = "2026-05-16"
+// SnapshotDate records when the embedded range data was captured. Refresh
+// callers can compare against this to decide whether to fetch fresh ranges.
+const SnapshotDate = "2026-05-17"
+
+// refreshMaxAge is how long a cached refresh file is considered fresh.
+const refreshMaxAge = 24 * time.Hour
 
 //go:embed data/cloudflare-v4.txt
 var cloudflareV4Raw []byte
@@ -36,6 +40,18 @@ var cloudflareV6Raw []byte
 
 //go:embed data/cloudfront.json
 var cloudfrontRaw []byte
+
+//go:embed data/fastly-v4.txt
+var fastlyV4Raw []byte
+
+//go:embed data/fastly-v6.txt
+var fastlyV6Raw []byte
+
+//go:embed data/sucuri-v4.txt
+var sucuriV4Raw []byte
+
+//go:embed data/sucuri-v6.txt
+var sucuriV6Raw []byte
 
 // Provider describes one known CDN: its canonical name, the DNS / HTTP
 // signals that identify it, and the IP prefixes it owns.
@@ -72,6 +88,52 @@ func init() {
 		panic(fmt.Sprintf("cdn: parsing embedded CloudFront ranges: %v", err))
 	}
 	providers = append(providers, cfront)
+
+	fastly, err := buildFastly()
+	if err != nil {
+		panic(fmt.Sprintf("cdn: parsing embedded Fastly ranges: %v", err))
+	}
+	providers = append(providers, fastly)
+
+	sucuri, err := buildSucuri()
+	if err != nil {
+		panic(fmt.Sprintf("cdn: parsing embedded Sucuri ranges: %v", err))
+	}
+	providers = append(providers, sucuri)
+}
+
+func buildFastly() (*Provider, error) {
+	prefixes, err := parsePlainPrefixes(fastlyV4Raw)
+	if err != nil {
+		return nil, fmt.Errorf("fastly v4: %w", err)
+	}
+	v6, err := parsePlainPrefixes(fastlyV6Raw)
+	if err != nil {
+		return nil, fmt.Errorf("fastly v6: %w", err)
+	}
+	prefixes = append(prefixes, v6...)
+	return &Provider{
+		Name:     "fastly",
+		dnsHints: []string{".fastly.net", ".fastlylb.net", ".fastly.com"},
+		prefixes: prefixes,
+	}, nil
+}
+
+func buildSucuri() (*Provider, error) {
+	prefixes, err := parsePlainPrefixes(sucuriV4Raw)
+	if err != nil {
+		return nil, fmt.Errorf("sucuri v4: %w", err)
+	}
+	v6, err := parsePlainPrefixes(sucuriV6Raw)
+	if err != nil {
+		return nil, fmt.Errorf("sucuri v6: %w", err)
+	}
+	prefixes = append(prefixes, v6...)
+	return &Provider{
+		Name:     "sucuri",
+		dnsHints: []string{".sucuri.net"},
+		prefixes: prefixes,
+	}, nil
 }
 
 func buildCloudflare() (*Provider, error) {
@@ -300,10 +362,9 @@ func headerProbe(ctx context.Context, target string, hc *http.Client) (string, [
 	return classifyHeaders(resp.Header), collectHeaderSignals(resp.Header), nil
 }
 
-// classifyHeaders chooses the most likely CDN from response headers. If both
-// Cloudflare and CloudFront markers appear (rare; usually means a chained
-// setup), Cloudflare wins because its markers — server: cloudflare + cf-ray
-// — are stronger and harder to fake than CloudFront's.
+// classifyHeaders chooses the most likely CDN from response headers.
+// Cloudflare markers (cf-ray, server:cloudflare) win over all others
+// because they are the strongest and hardest to fake.
 func classifyHeaders(h http.Header) string {
 	if strings.EqualFold(h.Get("Server"), "cloudflare") || h.Get("Cf-Ray") != "" {
 		return "cloudflare"
@@ -311,12 +372,20 @@ func classifyHeaders(h http.Header) string {
 	if h.Get("X-Amz-Cf-Id") != "" {
 		return "cloudfront"
 	}
-	// Looser CloudFront markers: x-cache / via with CloudFront token.
 	if strings.Contains(strings.ToLower(h.Get("Via")), "cloudfront") {
 		return "cloudfront"
 	}
 	if strings.Contains(strings.ToLower(h.Get("X-Cache")), "cloudfront") {
 		return "cloudfront"
+	}
+	if h.Get("X-Served-By") != "" && strings.Contains(strings.ToLower(h.Get("X-Served-By")), "cache-") {
+		return "fastly"
+	}
+	if h.Get("X-Fastly-Request-Id") != "" {
+		return "fastly"
+	}
+	if strings.EqualFold(h.Get("X-Sucuri-ID"), "") && h.Get("X-Sucuri-Cache") != "" {
+		return "sucuri"
 	}
 	return ""
 }
@@ -338,31 +407,61 @@ func collectHeaderSignals(h http.Header) []string {
 	if xc := strings.ToLower(h.Get("X-Cache")); strings.Contains(xc, "cloudfront") {
 		out = append(out, "header x-cache mentions cloudfront")
 	}
+	if h.Get("X-Fastly-Request-Id") != "" {
+		out = append(out, "header x-fastly-request-id present")
+	}
+	if sv := h.Get("X-Served-By"); sv != "" && strings.Contains(strings.ToLower(sv), "cache-") {
+		out = append(out, "header x-served-by mentions fastly cache node")
+	}
+	if h.Get("X-Sucuri-Cache") != "" {
+		out = append(out, "header x-sucuri-cache present")
+	}
 	return out
 }
 
-// Refresh fetches fresh range data from Cloudflare and AWS and rebuilds the
-// in-memory provider tables. The default sources are the same URLs the
-// embedded snapshot was captured from; tests pass custom URLs.
+// Refresh fetches fresh range data from upstream sources and rebuilds the
+// in-memory provider tables. Results are also written to the XDG cache dir
+// so subsequent process starts can load fresh data without re-fetching.
 //
 // Refresh is safe to call at any time but is not goroutine-safe with
 // concurrent IsCDNIP/ProviderForIP calls — callers serialize it themselves.
-// The CLI will expose this as `unearth cdn refresh` in a later packet.
 func Refresh(ctx context.Context, hc *http.Client) error {
+	return RefreshFrom(ctx, hc, refreshURLs{
+		cloudflareV4: "https://www.cloudflare.com/ips-v4",
+		cloudflareV6: "https://www.cloudflare.com/ips-v6",
+		cloudfront:   "https://ip-ranges.amazonaws.com/ip-ranges.json",
+		fastly:       "https://api.fastly.com/public-ip-list",
+	})
+}
+
+// refreshURLs groups the upstream URLs so tests can override them.
+type refreshURLs struct {
+	cloudflareV4 string
+	cloudflareV6 string
+	cloudfront   string
+	fastly       string
+}
+
+// RefreshFrom is the testable core of Refresh.
+func RefreshFrom(ctx context.Context, hc *http.Client, urls refreshURLs) error {
 	if hc == nil {
 		hc = http.DefaultClient
 	}
-	v4, err := fetch(ctx, hc, "https://www.cloudflare.com/ips-v4")
+	v4, err := fetch(ctx, hc, urls.cloudflareV4)
 	if err != nil {
 		return fmt.Errorf("cdn refresh cloudflare v4: %w", err)
 	}
-	v6, err := fetch(ctx, hc, "https://www.cloudflare.com/ips-v6")
+	v6, err := fetch(ctx, hc, urls.cloudflareV6)
 	if err != nil {
 		return fmt.Errorf("cdn refresh cloudflare v6: %w", err)
 	}
-	aws, err := fetch(ctx, hc, "https://ip-ranges.amazonaws.com/ip-ranges.json")
+	aws, err := fetch(ctx, hc, urls.cloudfront)
 	if err != nil {
 		return fmt.Errorf("cdn refresh cloudfront: %w", err)
+	}
+	fastlyJSON, err := fetch(ctx, hc, urls.fastly)
+	if err != nil {
+		return fmt.Errorf("cdn refresh fastly: %w", err)
 	}
 
 	cfPrefixes, err := parsePlainPrefixes(v4)
@@ -375,7 +474,7 @@ func Refresh(ctx context.Context, hc *http.Client) error {
 	}
 	cfPrefixes = append(cfPrefixes, cfV6...)
 
-	// Reuse the build helper for CloudFront, swapping its source bytes.
+	// CloudFront: reuse the build helper by temporarily swapping the source bytes.
 	prev := cloudfrontRaw
 	cloudfrontRaw = aws
 	cfront, err := buildCloudFront()
@@ -384,11 +483,145 @@ func Refresh(ctx context.Context, hc *http.Client) error {
 		return err
 	}
 
+	// Fastly: parse the JSON list endpoint.
+	fastlyPrefixes, err := parseFastlyJSON(fastlyJSON)
+	if err != nil {
+		return fmt.Errorf("cdn refresh fastly parse: %w", err)
+	}
+
 	newProviders := []*Provider{
 		{Name: "cloudflare", dnsHints: providers[0].dnsHints, prefixes: cfPrefixes},
 		cfront,
+		{Name: "fastly", dnsHints: providers[2].dnsHints, prefixes: fastlyPrefixes},
+		// Sucuri ranges are small and stable; not refreshed from upstream.
+		providers[3],
 	}
 	providers = newProviders
+
+	// Persist refreshed data to XDG cache for future process starts.
+	_ = persistRefreshCache(v4, v6, aws, fastlyJSON) // non-fatal
+	return nil
+}
+
+// parseFastlyJSON parses the Fastly public-ip-list JSON response:
+// {"addresses":["..."],"ipv6_addresses":["..."]}
+func parseFastlyJSON(data []byte) ([]netip.Prefix, error) {
+	var doc struct {
+		Addresses     []string `json:"addresses"`
+		IPv6Addresses []string `json:"ipv6_addresses"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	var out []netip.Prefix
+	for _, s := range append(doc.Addresses, doc.IPv6Addresses...) {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return nil, fmt.Errorf("fastly prefix %q: %w", s, err)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// cdnCacheDir returns the XDG-based directory for CDN range caches.
+func cdnCacheDir() (string, error) {
+	if dir := os.Getenv("XDG_CACHE_HOME"); dir != "" {
+		return filepath.Join(dir, "unearth", "cdn"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".cache", "unearth", "cdn"), nil
+}
+
+// persistRefreshCache writes freshly fetched range bytes to the XDG cache
+// so future process starts can load them without re-fetching. Errors are
+// non-fatal — the caller proceeds with the in-memory update regardless.
+func persistRefreshCache(cfV4, cfV6, awsJSON, fastlyJSON []byte) error {
+	dir, err := cdnCacheDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	files := map[string][]byte{
+		"cloudflare-v4.txt": cfV4,
+		"cloudflare-v6.txt": cfV6,
+		"cloudfront.json":   awsJSON,
+		"fastly-list.json":  fastlyJSON,
+	}
+	for name, data := range files {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LoadCachedRefresh loads previously-refreshed range data from the XDG
+// cache directory, if present and fresher than refreshMaxAge, and applies
+// it to the in-memory provider tables. This is called at process start by
+// the CLI and MCP server so they benefit from a prior refresh without
+// re-fetching.
+//
+// Returns nil when no usable cached data is found — the caller falls back
+// to the embedded snapshot, which is always valid.
+func LoadCachedRefresh() error {
+	dir, err := cdnCacheDir()
+	if err != nil {
+		return nil // XDG lookup failed; use embedded snapshot
+	}
+	check := func(name string) ([]byte, bool) {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err != nil || time.Since(info.ModTime()) > refreshMaxAge {
+			return nil, false
+		}
+		data, err := os.ReadFile(path) // #nosec G304
+		if err != nil {
+			return nil, false
+		}
+		return data, true
+	}
+	cfV4, ok1 := check("cloudflare-v4.txt")
+	cfV6, ok2 := check("cloudflare-v6.txt")
+	awsJSON, ok3 := check("cloudfront.json")
+	fastlyJSON, ok4 := check("fastly-list.json")
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		return nil // fall back to embedded snapshot
+	}
+
+	cfPrefixes, err := parsePlainPrefixes(cfV4)
+	if err != nil {
+		return nil
+	}
+	cfV6Parsed, err := parsePlainPrefixes(cfV6)
+	if err != nil {
+		return nil
+	}
+	cfPrefixes = append(cfPrefixes, cfV6Parsed...)
+
+	prev := cloudfrontRaw
+	cloudfrontRaw = awsJSON
+	cfront, err := buildCloudFront()
+	cloudfrontRaw = prev
+	if err != nil {
+		return nil
+	}
+
+	fastlyPrefixes, err := parseFastlyJSON(fastlyJSON)
+	if err != nil {
+		return nil
+	}
+
+	providers[0] = &Provider{Name: "cloudflare", dnsHints: providers[0].dnsHints, prefixes: cfPrefixes}
+	providers[1] = cfront
+	providers[2] = &Provider{Name: "fastly", dnsHints: providers[2].dnsHints, prefixes: fastlyPrefixes}
+	// providers[3] (sucuri) unchanged — no cached refresh for it
 	return nil
 }
 
