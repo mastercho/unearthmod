@@ -47,8 +47,6 @@ checksum:
   name_template: "checksums.txt"
 
 changelog:
-  source:
-    use: github
   use: github
 
 release:
