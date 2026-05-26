@@ -3,6 +3,12 @@
 All notable changes to `unearth` are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `favicon_hash` discovery technique (active tier, weight 0.75). Fetches the target's `/favicon.ico` (HTTPS with HTTP fallback), computes its MurmurHash3 using Shodan's convention — `mmh3(base64.encodebytes(favicon_bytes))` as a signed int32 — and queries Shodan (`http.favicon.hash`) and/or Censys (`services.http.response.favicons.hashes`) for hosts sharing that favicon. Either API key alone is sufficient; with neither configured the technique skips gracefully. Favicon hashes survive cert rotations and IP moves, complementing the cert-pivot techniques.
+
 ## [1.0.0] — 2026-05-17
 
 ### Added

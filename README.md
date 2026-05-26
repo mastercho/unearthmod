@@ -7,7 +7,7 @@
 
 **Unearth the real origin server hiding behind a CDN.**
 
-`unearth` discovers origin IPs by running twelve recon techniques in parallel — certificate transparency pivots, DNS history, SPF/MX analysis, subdomain enumeration, and more — then ranks candidate IPs by how many techniques independently agree. The result is a scored list of origin candidates, from most to least confident.
+`unearth` discovers origin IPs by running thirteen recon techniques in parallel — certificate transparency pivots, DNS history, SPF/MX analysis, subdomain enumeration, and more — then ranks candidate IPs by how many techniques independently agree. The result is a scored list of origin candidates, from most to least confident.
 
 ---
 
@@ -69,6 +69,7 @@ The default (`passive`) never touches the target. `--active` and `--aggressive` 
 | `host_header` | Active | No | 0.85 | HTTP host-header bypass: connects to candidate IPs with `Host: target` |
 | `banner_grab` | Active | No | 0.45 | SSH and HTTP banner fingerprinting of candidate IPs |
 | `shodan_cert` | Active | Yes — `SHODAN_API_KEY` | 0.85 | Shodan certificate-fingerprint search |
+| `favicon_hash` | Active | Yes — `SHODAN_API_KEY` or `CENSYS_PLATFORM_PAT` | 0.75 | Favicon MurmurHash3 pivot — fetches `/favicon.ico`, queries Shodan/Censys for hosts sharing the same favicon |
 | `error_page` | Aggressive | No | 0.60 | Error-page leak detection on the live target |
 | `ipv6_probe` | Aggressive | No | 0.70 | IPv6 exposure probe — resolves AAAA and checks for CDN bypass |
 

@@ -16,7 +16,14 @@ from late 2024 through mid-2026. Items are ranked by estimated signal-to-effort 
 
 ---
 
-## P1 — Favicon hash technique (`favicon_hash`)
+## P1 — Favicon hash technique (`favicon_hash`) — ✅ IMPLEMENTED (Phase 2, 2026-05-26)
+
+> Shipped in `pkg/techniques/faviconhash.go`. Active tier, weight 0.75, queries
+> Shodan (`http.favicon.hash`) and/or Censys
+> (`services.http.response.favicons.hashes`); either key alone is sufficient and
+> it skips gracefully with neither. Hash uses `mmh3(base64.encodebytes(favicon))`
+> as a signed int32 per Shodan convention. MurmurHash3 via
+> `github.com/spaolacci/murmur3`.
 
 **What:** Fetch the target's `/favicon.ico`, compute its MurmurHash3 (the same
 hash used by Shodan, Censys, FOFA, and ZoomEye), and query at least Shodan
