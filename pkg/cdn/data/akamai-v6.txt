@@ -1,0 +1,8 @@
+# Akamai CDN IPv6 ranges — captured 2026-05-26
+# AS20940 — Akamai International B.V.
+2600:1400::/24
+2a02:26f0::/32
+# AS16625 — Akamai Technologies
+2600:1480::/32
+# AS23454 — Akamai Technologies
+2600:1408::/32

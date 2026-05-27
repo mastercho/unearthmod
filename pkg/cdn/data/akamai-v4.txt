@@ -1,0 +1,28 @@
+# Akamai CDN IPv4 ranges — captured 2026-05-26
+# ASNs: AS20940, AS16625, AS17334, AS18680, AS22207, AS23454, AS24319, AS35994, AS43639, AS55164, AS200005
+# AS20940 — Akamai International B.V. (primary edge)
+23.32.0.0/11
+23.64.0.0/14
+23.72.0.0/13
+96.6.0.0/15
+96.16.0.0/15
+104.64.0.0/10
+172.224.0.0/12
+184.24.0.0/13
+184.50.0.0/15
+# AS20940 additional
+2.16.0.0/13
+92.122.0.0/15
+# AS16625 — Akamai Technologies
+69.192.0.0/16
+95.100.0.0/15
+# AS17334 — Akamai Technologies
+193.108.88.0/21
+# AS22207 — Akamai Technologies
+63.208.196.0/22
+# AS23454 — Akamai Technologies
+72.246.0.0/15
+# AS24319 — Akamai Technologies
+204.237.128.0/17
+# AS35994 — Akamai Technologies
+80.239.144.0/20

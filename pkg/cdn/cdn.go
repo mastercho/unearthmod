@@ -27,7 +27,7 @@ import (
 
 // SnapshotDate records when the embedded range data was captured. Refresh
 // callers can compare against this to decide whether to fetch fresh ranges.
-const SnapshotDate = "2026-05-17"
+const SnapshotDate = "2026-05-26"
 
 // refreshMaxAge is how long a cached refresh file is considered fresh.
 const refreshMaxAge = 24 * time.Hour
@@ -52,6 +52,12 @@ var sucuriV4Raw []byte
 
 //go:embed data/sucuri-v6.txt
 var sucuriV6Raw []byte
+
+//go:embed data/akamai-v4.txt
+var akamaiV4Raw []byte
+
+//go:embed data/akamai-v6.txt
+var akamaiV6Raw []byte
 
 // Provider describes one known CDN: its canonical name, the DNS / HTTP
 // signals that identify it, and the IP prefixes it owns.
@@ -100,6 +106,12 @@ func init() {
 		panic(fmt.Sprintf("cdn: parsing embedded Sucuri ranges: %v", err))
 	}
 	providers = append(providers, sucuri)
+
+	akamai, err := buildAkamai()
+	if err != nil {
+		panic(fmt.Sprintf("cdn: parsing embedded Akamai ranges: %v", err))
+	}
+	providers = append(providers, akamai)
 }
 
 func buildFastly() (*Provider, error) {
@@ -132,6 +144,29 @@ func buildSucuri() (*Provider, error) {
 	return &Provider{
 		Name:     "sucuri",
 		dnsHints: []string{".sucuri.net"},
+		prefixes: prefixes,
+	}, nil
+}
+
+func buildAkamai() (*Provider, error) {
+	prefixes, err := parsePlainPrefixes(akamaiV4Raw)
+	if err != nil {
+		return nil, fmt.Errorf("akamai v4: %w", err)
+	}
+	v6, err := parsePlainPrefixes(akamaiV6Raw)
+	if err != nil {
+		return nil, fmt.Errorf("akamai v6: %w", err)
+	}
+	prefixes = append(prefixes, v6...)
+	return &Provider{
+		Name: "akamai",
+		dnsHints: []string{
+			".edgesuite.net",
+			".edgekey.net",
+			".akamaized.net",
+			".akamaitechnologies.com",
+			".akamai.net",
+		},
 		prefixes: prefixes,
 	}, nil
 }
@@ -387,6 +422,9 @@ func classifyHeaders(h http.Header) string {
 	if strings.EqualFold(h.Get("X-Sucuri-ID"), "") && h.Get("X-Sucuri-Cache") != "" {
 		return "sucuri"
 	}
+	if h.Get("X-Check-Cacheable") != "" || h.Get("X-Akamai-Transformed") != "" {
+		return "akamai"
+	}
 	return ""
 }
 
@@ -415,6 +453,12 @@ func collectHeaderSignals(h http.Header) []string {
 	}
 	if h.Get("X-Sucuri-Cache") != "" {
 		out = append(out, "header x-sucuri-cache present")
+	}
+	if h.Get("X-Check-Cacheable") != "" {
+		out = append(out, "header x-check-cacheable present (akamai)")
+	}
+	if h.Get("X-Akamai-Transformed") != "" {
+		out = append(out, "header x-akamai-transformed present")
 	}
 	return out
 }

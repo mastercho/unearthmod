@@ -307,3 +307,58 @@ func TestParseFastlyJSON_BadPrefix(t *testing.T) {
 		t.Error("expected error on non-CIDR string")
 	}
 }
+
+// ── Akamai ────────────────────────────────────────────────────────────────────
+
+func TestIsCDNIP_Akamai(t *testing.T) {
+	// 23.32.0.1 is inside 23.32.0.0/11, an Akamai AS20940 range.
+	addr := netip.MustParseAddr("23.32.0.1")
+	if !IsCDNIP(addr) {
+		t.Errorf("23.32.0.1 should be Akamai CDN IP")
+	}
+	if got := ProviderForIP(addr); got != "akamai" {
+		t.Errorf("ProviderForIP(23.32.0.1) = %q, want akamai", got)
+	}
+}
+
+func TestIsCDNIP_Akamai_IPv6(t *testing.T) {
+	// 2600:1400::1 is inside 2600:1400::/24, an Akamai IPv6 range.
+	addr := netip.MustParseAddr("2600:1400::1")
+	if !IsCDNIP(addr) {
+		t.Errorf("2600:1400::1 should be Akamai CDN IP")
+	}
+	if got := ProviderForIP(addr); got != "akamai" {
+		t.Errorf("ProviderForIP(2600:1400::1) = %q, want akamai", got)
+	}
+}
+
+func TestProviderByDNS_Akamai(t *testing.T) {
+	cases := map[string]string{
+		"foo.edgesuite.net":            "akamai",
+		"bar.edgekey.net":              "akamai",
+		"example.akamaized.net":        "akamai",
+		"cdn.akamaitechnologies.com":   "akamai",
+		"edge.akamai.net":              "akamai",
+	}
+	for host, want := range cases {
+		got, _ := providerByDNS(host)
+		if got != want {
+			t.Errorf("providerByDNS(%s) = %q, want %q", host, got, want)
+		}
+	}
+}
+
+func TestClassifyHeaders_Akamai(t *testing.T) {
+	t.Run("x-check-cacheable", func(t *testing.T) {
+		h := http.Header{"X-Check-Cacheable": []string{"YES"}}
+		if got := classifyHeaders(h); got != "akamai" {
+			t.Errorf("classifyHeaders with x-check-cacheable = %q, want akamai", got)
+		}
+	})
+	t.Run("x-akamai-transformed", func(t *testing.T) {
+		h := http.Header{"X-Akamai-Transformed": []string{"9 - 0 pmb=mRUM,1"}}
+		if got := classifyHeaders(h); got != "akamai" {
+			t.Errorf("classifyHeaders with x-akamai-transformed = %q, want akamai", got)
+		}
+	})
+}
