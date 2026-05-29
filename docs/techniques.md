@@ -165,6 +165,38 @@ Both backends run in parallel. If one fails, the technique returns the other's r
 
 ---
 
+### `leakix_cert`
+
+**Tier:** Passive | **Weight:** 0.71 | **API key:** `LEAKIX_API_KEY`
+
+**What it does:** Fingerprints the target's current TLS leaf certificate (SHA-1), then queries LeakIX (`leakix.net`) for every scanned service whose certificate carries that fingerprint. Non-CDN hits are surfaced as origin candidates — the same cert-pivot idea as `censys_cert` / `shodan_cert` / `fofa_cert` / `netlas_cert` / `criminalip_asset` / `binaryedge_cert`, against a seventh independent index.
+
+**Data source:** LeakIX search API (`https://leakix.net/search`). The query (`ssl.certificate.fingerprint:"<sha1>"`) is passed in the `q` parameter, the service scope is selected with `scope=service`, and the key authenticates via the `api-key` header. The success response is a bare JSON array of service events; each event's `ip` field (with a fallback to `host`) is parsed into a candidate (CDN edge IPs are filtered). Results are paged via the `page` parameter; paging stops on the first short page since LeakIX reports no total count.
+
+**Why it complements the other engines:** LeakIX runs its own continuous internet-wide scan and exposure index, overlapping only partially with Shodan, Censys, FOFA, Netlas, Criminal IP, and BinaryEdge. Like Shodan and BinaryEdge, LeakIX indexes the leaf cert's **SHA-1** fingerprint rather than the SHA-256 the Censys/FOFA/Netlas/Criminal IP pivots rely on, so it both broadens reach and corroborates the SHA-1 pivot from a third source. A misconfigured origin that leaks its real certificate may surface in LeakIX when it is absent from the others — the value is coverage diversity, not redundancy.
+
+**Key requirement:** `LEAKIX_API_KEY` must be present; without it the technique skips gracefully (exactly like the other keyed cert pivots). LeakIX offers a free tier with a daily request allowance — when that allowance is exhausted, or the plan lacks the search capability, the API answers `HTTP 429`/`403` (or a quota/permission message, sometimes `HTTP 200` carrying an `error`/`message` field), which the technique treats as a clean tier-insufficient skip rather than a run failure. An invalid key/token degrades to a clean missing-key skip.
+
+**Limitations:** LeakIX's free tier covers the search used here; deeper result pages and some plugins are reserved for paid plans. Because LeakIX reports no total-result count, pagination relies on a page-fill heuristic and a hard page ceiling, so extremely large certificate-sharing sets may be truncated.
+
+---
+
+### `fullhunt_asset`
+
+**Tier:** Passive | **Weight:** 0.70 | **API key:** `FULLHUNT_API_KEY`
+
+**What it does:** Queries FullHunt (`fullhunt.io`) for the host inventory it has crawled under the target apex domain and surfaces the non-CDN IPs FullHunt observed for those hosts as origin candidates. **This is not a certificate-fingerprint pivot.** Unlike the seven cert engines (`censys_cert` / `shodan_cert` / `fofa_cert` / `netlas_cert` / `criminalip_asset` / `binaryedge_cert` / `leakix_cert`), FullHunt's public API has no cert-fingerprint search; it is an attack-surface enumerator that maps a domain to the hosts and IPs it has discovered.
+
+**Data source:** FullHunt domain-details API (`https://fullhunt.io/api/v1/domain/{domain}/details`). The target domain is the path parameter and the key authenticates via the `X-API-KEY` header. The response is a single object envelope carrying a `hosts[]` array; each host's `ip_address` field (a JSON array of strings, with a defensive single-string fallback) is parsed into candidates (CDN edge IPs are filtered, IPs deduped). The full inventory arrives in one response, so no pagination is needed.
+
+**Why it complements the cert engines:** FullHunt's corpus is a different kind, not a redundant one. The cert engines find hosts presenting the *same leaf certificate* the live target serves; FullHunt finds every host *under the same domain* it has crawled and the IPs behind them. A misconfigured origin that never reused the front-door certificate — so the cert pivots miss it — can still appear in FullHunt's historical inventory (e.g. an `origin.example.com` or `direct.example.com` record pointing straight at the backend). The non-CDN IPs FullHunt recorded for those hosts become origin candidates.
+
+**Key requirement:** `FULLHUNT_API_KEY` must be present; without it the technique skips gracefully. FullHunt offers a free tier with a monthly request allowance — when that allowance is exhausted, or the plan lacks the endpoint, the API answers `HTTP 429`/`403` (or a quota/permission message, sometimes `HTTP 200` carrying a `message`/`error` field), which the technique treats as a clean tier-insufficient skip rather than a run failure. An invalid key degrades to a clean missing-key skip.
+
+**Limitations:** FullHunt's free tier covers the domain-details endpoint used here; deeper subdomain and host-detail data are reserved for paid plans. The inventory is only as current as FullHunt's last crawl of the domain, and only hosts FullHunt has discovered are returned — a brand-new or obscure origin record may not yet be indexed.
+
+---
+
 ### `dns_history`
 
 **Tier:** Passive | **Weight:** 0.65 | **API key:** `SECURITYTRAILS_API_KEY` or `VIEWDNS_API_KEY`
