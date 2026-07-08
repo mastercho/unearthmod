@@ -37,6 +37,9 @@ func TestCriminalIP_Happy(t *testing.T) {
 			if req.Header.Get("x-api-key") != "cip-tok" {
 				t.Errorf("x-api-key header: got %q", req.Header.Get("x-api-key"))
 			}
+			if got := req.URL.Query().Get("offset"); got != "0" {
+				t.Errorf("offset: got %q, want 0", got)
+			}
 			qv := req.URL.Query().Get("query")
 			if !strings.Contains(qv, "certificate") {
 				t.Errorf("query missing cert field: %q", qv)
@@ -258,6 +261,22 @@ func TestCriminalIP_5xx_IsHardError(t *testing.T) {
 	}
 	if errors.Is(err, ErrTierInsufficient) || errors.Is(err, ErrMissingAPIKey) {
 		t.Fatalf("500 should not be classified as tier/key error, got %v", err)
+	}
+}
+
+func TestCriminalIP_400IncludesProviderBody(t *testing.T) {
+	withStubFingerprint(t, "fp", nil)
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://api.criminalip.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(400, `{"message":"Missing params"}`), nil
+		},
+	})
+	_, err := (criminalIPAssetTechnique{}).Run(context.Background(), "x", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    criminalIPKeys(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "Missing params") {
+		t.Fatalf("400 should include provider body, got %v", err)
 	}
 }
 

@@ -35,13 +35,15 @@ func init() { Register(criminalIPAssetTechnique{}) }
 // CRIMINAL IP API endpoint — isolated in a single constant per the codebase's
 // "one URL constant per provider" discipline. The banner search endpoint takes
 // the query in the `query` parameter and authenticates via the `x-api-key`
-// header. The `certificate` field matches against the indexed leaf-certificate
-// fingerprint — the same lowercase-hex SHA-256 that the other cert techniques
-// pivot on, so the techniques corroborate one another.
+// header. Criminal IP also requires an explicit `offset` parameter. The
+// `certificate` field matches against the indexed leaf-certificate fingerprint
+// — the same lowercase-hex SHA-256 that the other cert techniques pivot on, so
+// the techniques corroborate one another.
 const (
 	criminalIPSearchURL = "https://api.criminalip.io/v1/banner/search"
 	criminalIPCertField = "certificate"
 	criminalIPCertTTL   = 1 * time.Hour
+	criminalIPBodyLimit = 64 * 1024
 )
 
 type criminalIPAssetTechnique struct{}
@@ -123,6 +125,7 @@ func criminalIPSearchPage(ctx context.Context, opts RunOptions, fp string) (crim
 
 	q := url.Values{}
 	q.Set("query", fmt.Sprintf(`%s: %s`, criminalIPCertField, fp))
+	q.Set("offset", "0")
 	u := criminalIPSearchURL + "?" + q.Encode()
 
 	if err := rateWait(ctx, opts.RateLimiter, "criminalip"); err != nil {
@@ -152,7 +155,8 @@ func criminalIPSearchPage(ctx context.Context, opts RunOptions, fp string) (crim
 		return doc, fmt.Errorf("criminalip_asset: status %d: %w", resp.StatusCode, ErrTierInsufficient)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return doc, fmt.Errorf("criminalip_asset: %s status %d", criminalIPSearchURL, resp.StatusCode)
+		return doc, fmt.Errorf("criminalip_asset: %s status %d%s",
+			criminalIPSearchURL, resp.StatusCode, providerErrorBody(resp.Body, criminalIPBodyLimit))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		return doc, fmt.Errorf("criminalip_asset decode: %w", err)

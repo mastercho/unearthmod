@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.3] — 2026-07-08
+
+### Fixed
+
+- Updated `netlas_cert` to the current Netlas API query shape (`certificate.fingerprint_sha256`, Bearer auth, explicit included fields) and preserved provider error bodies for malformed-query responses.
+- Added the required Criminal IP banner-search `offset` parameter and preserved provider error bodies for validation failures such as `Missing params`.
+
 ## [1.0.2] — 2026-07-08
 
 ### Fixed
@@ -127,3 +134,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [1.0.0]: https://github.com/bugsyhewitt/unearth/releases/tag/v1.0.0
 [1.0.1]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.1
 [1.0.2]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.2
+[1.0.3]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.3

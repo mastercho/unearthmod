@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -38,6 +40,21 @@ func cacheWrite(c CacheStore, opts RunOptions, key string, payload []byte, ttl t
 		return
 	}
 	_ = c.Set(key, payload, ttl)
+}
+
+func providerErrorBody(r io.Reader, limit int64) string {
+	if r == nil || limit <= 0 {
+		return ""
+	}
+	b, err := io.ReadAll(io.LimitReader(r, limit))
+	if err != nil {
+		return ""
+	}
+	body := strings.TrimSpace(string(b))
+	if body == "" {
+		return ""
+	}
+	return ": " + body
 }
 
 // httpGetJSON is the common pattern used by API-backed techniques: rate-

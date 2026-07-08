@@ -31,16 +31,28 @@ func TestNetlas_Happy(t *testing.T) {
 	withStubFingerprint(t, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", nil)
 	hc, rt := stubClient(map[string]func(*http.Request) (*http.Response, error){
 		"https://app.netlas.io/": func(req *http.Request) (*http.Response, error) {
-			if req.Header.Get("X-API-Key") != "netlas-tok" {
-				t.Errorf("X-API-Key header: got %q", req.Header.Get("X-API-Key"))
+			if req.Header.Get("Authorization") != "Bearer netlas-tok" {
+				t.Errorf("Authorization header: got %q", req.Header.Get("Authorization"))
 			}
 			q := req.URL.Query()
 			qv := q.Get("q")
-			if !strings.Contains(qv, "certificate.fingerprints.sha256") {
+			if !strings.Contains(qv, "certificate.fingerprint_sha256") {
 				t.Errorf("query missing cert field: %q", qv)
 			}
 			if !strings.Contains(qv, "deadbeef") {
 				t.Errorf("query missing fingerprint: %q", qv)
+			}
+			if got := q.Get("fields"); got != "ip" {
+				t.Errorf("fields = %q, want ip", got)
+			}
+			if got := q.Get("source_type"); got != "include" {
+				t.Errorf("source_type = %q, want include", got)
+			}
+			if got := q.Get("start"); got != "0" {
+				t.Errorf("start = %q, want 0", got)
+			}
+			if q.Has("size") {
+				t.Errorf("GET responses search should not send unsupported size parameter")
 			}
 			return stubResponse(200, netlasPage), nil
 		},
@@ -204,6 +216,22 @@ func TestNetlas_5xx_IsHardError(t *testing.T) {
 	}
 	if errors.Is(err, ErrTierInsufficient) || errors.Is(err, ErrMissingAPIKey) {
 		t.Fatalf("500 should not be classified as tier/key error, got %v", err)
+	}
+}
+
+func TestNetlas_400IncludesProviderBody(t *testing.T) {
+	withStubFingerprint(t, "fp", nil)
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://app.netlas.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(400, `{"detail":"Invalid query"}`), nil
+		},
+	})
+	_, err := (netlasCertTechnique{}).Run(context.Background(), "x", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    netlasKeys(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "Invalid query") {
+		t.Fatalf("400 should include provider body, got %v", err)
 	}
 }
 

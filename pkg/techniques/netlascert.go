@@ -33,15 +33,15 @@ func init() { Register(netlasCertTechnique{}) }
 //
 // NETLAS API endpoint — isolated in a single constant per the codebase's
 // "one URL constant per provider" discipline. The responses search endpoint
-// takes the query in the `q` parameter and authenticates via the `X-API-Key`
-// header. The `certificate.fingerprints.sha256` field matches against the
+// takes the query in the `q` parameter and authenticates via Bearer auth.
+// The `certificate.fingerprint_sha256` field matches against the
 // indexed leaf-certificate fingerprint — the same lowercase-hex SHA-256 that
 // censys_cert and fofa_cert pivot on, so the techniques corroborate.
 const (
 	netlasSearchURL = "https://app.netlas.io/api/responses/"
-	netlasCertField = "certificate.fingerprints.sha256"
-	netlasPageSize  = 100
+	netlasCertField = "certificate.fingerprint_sha256"
 	netlasCertTTL   = 1 * time.Hour
+	netlasBodyLimit = 64 * 1024
 )
 
 type netlasCertTechnique struct{}
@@ -98,7 +98,9 @@ func netlasSearchPage(ctx context.Context, opts RunOptions, fp string) (netlasSe
 
 	q := url.Values{}
 	q.Set("q", fmt.Sprintf(`%s:%s`, netlasCertField, fp))
-	q.Set("size", fmt.Sprintf("%d", netlasPageSize))
+	q.Set("start", "0")
+	q.Set("fields", "ip")
+	q.Set("source_type", "include")
 	u := netlasSearchURL + "?" + q.Encode()
 
 	if err := rateWait(ctx, opts.RateLimiter, "netlas"); err != nil {
@@ -109,7 +111,7 @@ func netlasSearchPage(ctx context.Context, opts RunOptions, fp string) (netlasSe
 	if err != nil {
 		return doc, err
 	}
-	req.Header.Set("X-API-Key", opts.APIKeys.NetlasAPIKey)
+	req.Header.Set("Authorization", "Bearer "+opts.APIKeys.NetlasAPIKey)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := opts.HTTPClient.Do(req)
@@ -128,7 +130,8 @@ func netlasSearchPage(ctx context.Context, opts RunOptions, fp string) (netlasSe
 		return doc, fmt.Errorf("netlas_cert: status %d: %w", resp.StatusCode, ErrTierInsufficient)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return doc, fmt.Errorf("netlas_cert: %s status %d", netlasSearchURL, resp.StatusCode)
+		return doc, fmt.Errorf("netlas_cert: %s status %d%s",
+			netlasSearchURL, resp.StatusCode, providerErrorBody(resp.Body, netlasBodyLimit))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		return doc, fmt.Errorf("netlas_cert decode: %w", err)
