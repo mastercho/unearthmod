@@ -97,13 +97,24 @@ type TechniqueErr struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// TechniqueRun records whether a selected technique ran, skipped, or failed.
+// It is primarily used by verbose CLI output so clean zero-result techniques
+// are visible instead of looking like they were never attempted.
+type TechniqueRun struct {
+	Technique  string `json:"technique"`
+	Status     string `json:"status"`
+	Candidates int    `json:"candidates"`
+	Reason     string `json:"reason,omitempty"`
+}
+
 // Result is the full output of a discovery run.
 type Result struct {
-	Target      string         `json:"target"`
-	CDNDetected string         `json:"cdn_detected,omitempty"`
-	Candidates  []ScoredIP     `json:"candidates"`
-	Timestamp   time.Time      `json:"timestamp"`
-	Errors      []TechniqueErr `json:"errors,omitempty"`
+	Target        string         `json:"target"`
+	CDNDetected   string         `json:"cdn_detected,omitempty"`
+	Candidates    []ScoredIP     `json:"candidates"`
+	Timestamp     time.Time      `json:"timestamp"`
+	Errors        []TechniqueErr `json:"errors,omitempty"`
+	TechniqueRuns []TechniqueRun `json:"technique_runs,omitempty"`
 	// Warnings is a list of non-fatal issues — config warnings from
 	// LoadWeights, cache-open failures, CDN-detection errors. Surfaced so
 	// the CLI and the MCP server can show them without inspecting Errors,
@@ -197,6 +208,11 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 				Err:       techniques.ErrMissingAPIKey.Error(),
 				Reason:    "missing_api_key",
 			})
+			result.TechniqueRuns = append(result.TechniqueRuns, TechniqueRun{
+				Technique: t.Name(),
+				Status:    "skipped",
+				Reason:    "missing_api_key",
+			})
 			continue
 		}
 		if cc, ok := t.(techniques.CandidateConsumer); ok && cc.ConsumesCandidates() {
@@ -210,13 +226,24 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 	foldResults := func(rs []techResult) {
 		for _, r := range rs {
 			if r.err != nil {
+				reason := reasonForErr(r.err)
 				result.Errors = append(result.Errors, TechniqueErr{
 					Technique: r.t.Name(),
 					Err:       r.err.Error(),
-					Reason:    reasonForErr(r.err),
+					Reason:    reason,
+				})
+				result.TechniqueRuns = append(result.TechniqueRuns, TechniqueRun{
+					Technique: r.t.Name(),
+					Status:    "error",
+					Reason:    reason,
 				})
 				continue
 			}
+			result.TechniqueRuns = append(result.TechniqueRuns, TechniqueRun{
+				Technique:  r.t.Name(),
+				Status:     "ok",
+				Candidates: len(r.candidates),
+			})
 			w := resolveWeight(weights, r.t)
 			for _, c := range r.candidates {
 				a, err := netip.ParseAddr(c.IP)
@@ -270,6 +297,9 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 	})
 	sort.Slice(result.Errors, func(i, j int) bool {
 		return result.Errors[i].Technique < result.Errors[j].Technique
+	})
+	sort.Slice(result.TechniqueRuns, func(i, j int) bool {
+		return result.TechniqueRuns[i].Technique < result.TechniqueRuns[j].Technique
 	})
 
 	result.Timestamp = time.Now().UTC()

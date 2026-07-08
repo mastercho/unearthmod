@@ -54,6 +54,7 @@ func TestVerbose_EmitsResultMetaOnStderrForJSONL(t *testing.T) {
 		r := fakeResult(target, "203.0.113.1")
 		r.Warnings = []string{"w1"}
 		r.Errors = []unearth.TechniqueErr{{Technique: "t", Err: "e", Reason: "missing_api_key"}}
+		r.TechniqueRuns = []unearth.TechniqueRun{{Technique: "phpinfo_scan", Status: "ok", Candidates: 0}}
 		return r, nil
 	})
 	code, stdout, stderr := captured(t, "--verbose", "example.test")
@@ -67,8 +68,8 @@ func TestVerbose_EmitsResultMetaOnStderrForJSONL(t *testing.T) {
 	if strings.Contains(stdout, "warn:") || strings.Contains(stdout, "CDN:") {
 		t.Errorf("stdout should not carry result metadata: %q", stdout)
 	}
-	// stderr should mention CDN, warning, and error reason.
-	for _, want := range []string{"CDN: cloudflare", "warn:", "missing_api_key"} {
+	// stderr should mention CDN, run summary, warning, and error reason.
+	for _, want := range []string{"CDN: cloudflare", "run[phpinfo_scan]", "candidates=0", "warn:", "missing_api_key"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}

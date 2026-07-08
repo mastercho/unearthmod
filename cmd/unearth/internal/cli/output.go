@@ -175,6 +175,15 @@ func emitResultMeta(w io.Writer, res *unearth.Result) {
 	if res.CDNDetected != "" {
 		_, _ = fmt.Fprintf(w, "unearth: %s — CDN: %s\n", res.Target, res.CDNDetected)
 	}
+	for _, r := range res.TechniqueRuns {
+		if r.Reason != "" {
+			_, _ = fmt.Fprintf(w, "unearth: %s — run[%s] status=%q candidates=%d reason=%q\n",
+				res.Target, r.Technique, r.Status, r.Candidates, r.Reason)
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "unearth: %s — run[%s] status=%q candidates=%d\n",
+			res.Target, r.Technique, r.Status, r.Candidates)
+	}
 	for _, e := range res.Errors {
 		_, _ = fmt.Fprintf(w, "unearth: %s — err[%s] reason=%q: %s\n",
 			res.Target, e.Technique, e.Reason, e.Err)

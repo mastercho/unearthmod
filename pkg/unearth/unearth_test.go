@@ -214,6 +214,28 @@ func TestDiscover_MissingAPIKeySkipped(t *testing.T) {
 	}
 }
 
+func TestDiscover_RecordsZeroCandidateTechniqueRun(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "empty", weight: 0.5},
+		&fakeTech{name: "hit", weight: 0.5, candidates: []techniques.Candidate{{IP: "203.0.113.8"}}},
+	)
+	res, err := Discover(context.Background(), "x", testOpts())
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+
+	got := map[string]TechniqueRun{}
+	for _, r := range res.TechniqueRuns {
+		got[r.Technique] = r
+	}
+	if r := got["empty"]; r.Status != "ok" || r.Candidates != 0 {
+		t.Fatalf("empty run = %+v, want ok with 0 candidates", r)
+	}
+	if r := got["hit"]; r.Status != "ok" || r.Candidates != 1 {
+		t.Fatalf("hit run = %+v, want ok with 1 candidate", r)
+	}
+}
+
 func TestHasKeyFor_FaviconHashUsesShodanOrCensys(t *testing.T) {
 	if !hasKeyFor("favicon_hash", techniques.APIKeys{ShodanAPIKey: "shodan"}) {
 		t.Fatal("favicon_hash should run with Shodan key")
