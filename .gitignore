@@ -12,6 +12,7 @@ coverage.*
 *.db
 .env
 .env.*
+!.env.example
 
 # Editor / OS
 .DS_Store

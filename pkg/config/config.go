@@ -1,7 +1,7 @@
 // Package config loads technique weight overrides and third-party API keys
-// from the environment and from a user-supplied weights file. It also embeds
-// the project's default weight table so the binary always has a working
-// default with no external file required.
+// from .env, the process environment, and a user-supplied weights file. It
+// also embeds the project's default weight table so the binary always has a
+// working default with no external file required.
 package config
 
 import (
@@ -47,6 +47,7 @@ var knownTechniques = map[string]struct{}{
 	"host_header":           {},
 	"banner_grab":           {},
 	"error_page":            {},
+	"phpinfo_scan":          {},
 	"ipv6_probe":            {},
 }
 
@@ -208,6 +209,8 @@ func envFirst(names ...string) string {
 // honoring both names fixes that without breaking anyone already using the
 // prefixed form.
 func LoadAPIKeys() techniques.APIKeys {
+	loadDefaultEnvFile()
+
 	return techniques.APIKeys{
 		CensysPlatformPAT: envFirst("CENSYS_PLATFORM_PAT", "UNEARTH_CENSYS_PAT"),
 		CensysAPIID:       envFirst("CENSYS_API_ID", "UNEARTH_CENSYS_API_ID"),

@@ -66,7 +66,7 @@ Any MCP client that supports stdio transport can launch the server:
 
 ## API keys
 
-The server loads API keys from its process environment using the same variable names as the CLI:
+The server loads API keys the same way as the CLI: `.env` in the current working directory first, then the process environment. Set `UNEARTH_ENV_FILE=/path/to/.env` to point the server at a specific file.
 
 | Env var | Unlocks |
 |---|---|
@@ -78,7 +78,7 @@ The server loads API keys from its process environment using the same variable n
 | `NETLAS_API_KEY` | `netlas_cert` in `unearth_discover` and `unearth_cert_fingerprint` |
 | `CRIMINALIP_API_KEY` | `criminalip_asset` in `unearth_discover` and `unearth_cert_fingerprint` |
 
-Keys are passed via the MCP client's `env` configuration block (see above) — the server never prompts for them.
+Keys can also be passed via the MCP client's `env` configuration block (see above). Process environment values win over `.env` entries, and the server never prompts for them.
 
 ---
 

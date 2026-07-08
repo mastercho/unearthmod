@@ -7,15 +7,17 @@
 
 **Unearth the real origin server hiding behind a CDN.**
 
-`unearth` discovers origin IPs by running seventeen recon techniques in parallel — certificate transparency pivots, DNS history, SPF/MX analysis, subdomain enumeration, email `Received:`-header mining, and more — then ranks candidate IPs by how many techniques independently agree. The result is a scored list of origin candidates, from most to least confident.
+`unearth` discovers origin IPs by running multiple recon techniques in parallel — certificate transparency pivots, DNS history, SPF/MX analysis, subdomain enumeration, email `Received:`-header mining, exposure probes, and more — then ranks candidate IPs by how many techniques independently agree. The result is a scored list of origin candidates, from most to least confident.
 
 ---
 
 ## Install
 
 ```sh
-go install github.com/unearth-tool/unearth/cmd/unearth@latest
-go install github.com/unearth-tool/unearth/cmd/unearth-mcp@latest
+git clone https://github.com/mastercho/unearthmod.git
+cd unearthmod
+go install ./cmd/unearth
+go install ./cmd/unearth-mcp
 ```
 
 Pre-built release binaries (linux/darwin × amd64/arm64) are available on the [Releases](https://github.com/bugsyhewitt/unearth/releases) page.
@@ -93,6 +95,7 @@ The default (`passive`) never touches the target. `--active` and `--aggressive` 
 | `jarm_fingerprint` | Active | No | 0.70 | JARM TLS active fingerprinting — sends 10 crafted ClientHellos to candidate IPs, hashes the handshake response into a 62-char fingerprint, and flags candidates whose JARM matches the target's (rejecting known CDN-edge signatures) |
 | `email_header` | Passive | No | 0.85 | Email `Received:`-header mining — parses an operator-supplied `.eml` file (`--email-file`) and surfaces non-CDN relay IPs from the mail hop chain |
 | `error_page` | Aggressive | No | 0.60 | Error-page leak detection on the live target |
+| `phpinfo_scan` | Aggressive | No | 0.74 | PHPinfo exposure probe — checks the common phpinfo paths from ProjectDiscovery's Nuclei template and extracts exposed `SERVER_ADDR`/`LOCAL_ADDR` IPs |
 | `ipv6_probe` | Aggressive | No | 0.70 | IPv6 exposure probe — resolves AAAA and checks for CDN bypass |
 
 See [docs/techniques.md](docs/techniques.md) for detailed descriptions of each technique.
@@ -103,28 +106,36 @@ See [docs/techniques.md](docs/techniques.md) for detailed descriptions of each t
 
 `unearth` is fully usable with zero API keys. The keyless passive techniques (`ct_fingerprint`, `crtsh`, `spf_mx`, `subdomain_enum`, `split_dns`, `email_header`, `otx_passivedns`) plus keyless active techniques (`host_header`, `asn_sweep`, `jarm_fingerprint`) cover the common case. API keys extend coverage with higher-confidence keyed sources.
 
-Set keys in your environment before running:
+Copy `.env.example` to `.env`, then fill in only the credentials you want to use:
 
 ```sh
-export CENSYS_PLATFORM_PAT="your-key"
-export SECURITYTRAILS_API_KEY="your-key"
-export VIEWDNS_API_KEY="your-key"
-export SHODAN_API_KEY="your-key"
-export FOFA_EMAIL="you@example.com"
-export FOFA_KEY="your-fofa-key"
-export NETLAS_API_KEY="your-netlas-key"
-export CRIMINALIP_API_KEY="your-criminalip-key"
-export BINARYEDGE_API_KEY="your-binaryedge-key"
-export LEAKIX_API_KEY="your-leakix-key"
-export ONYPHE_API_KEY="your-onyphe-key"
-export FULLHUNT_API_KEY="your-fullhunt-key"
-export ZOOMEYE_API_KEY="your-zoomeye-key"
-export PDCP_API_KEY="your-projectdiscovery-key"
-export VIRUSTOTAL_API_KEY="your-virustotal-key"
-export URLSCAN_API_KEY="your-urlscan-key"
-export OTX_API_KEY="your-alienvault-otx-key"   # optional; otx_passivedns runs anonymously without it
-export GREYNOISE_API_KEY="your-greynoise-key"  # GNQL search lives in the paid Investigate/Enterprise tiers
+cp .env.example .env
 ```
+
+`.env` uses normal `KEY=value` lines:
+
+```dotenv
+CENSYS_PLATFORM_PAT="your-key"
+SECURITYTRAILS_API_KEY="your-key"
+VIEWDNS_API_KEY="your-key"
+SHODAN_API_KEY="your-key"
+FOFA_EMAIL="you@example.com"
+FOFA_KEY="your-fofa-key"
+NETLAS_API_KEY="your-netlas-key"
+CRIMINALIP_API_KEY="your-criminalip-key"
+BINARYEDGE_API_KEY="your-binaryedge-key"
+LEAKIX_API_KEY="your-leakix-key"
+ONYPHE_API_KEY="your-onyphe-key"
+FULLHUNT_API_KEY="your-fullhunt-key"
+ZOOMEYE_API_KEY="your-zoomeye-key"
+PDCP_API_KEY="your-projectdiscovery-key"
+VIRUSTOTAL_API_KEY="your-virustotal-key"
+URLSCAN_API_KEY="your-urlscan-key"
+OTX_API_KEY="your-alienvault-otx-key"          # optional; otx_passivedns runs anonymously without it
+GREYNOISE_API_KEY="your-greynoise-key"         # GNQL search lives in the paid Investigate/Enterprise tiers
+```
+
+The CLI automatically loads `.env` from the current working directory before reading the process environment. Set `UNEARTH_ENV_FILE=/path/to/.env` to use a different file. Process environment values win when both are present.
 
 The tool announces which keys are loaded (or absent) on every run. Key-required techniques are silently skipped when the key is missing.
 

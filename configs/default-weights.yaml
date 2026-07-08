@@ -23,4 +23,5 @@ weights:
   host_header: 0.85
   banner_grab: 0.45
   error_page: 0.60
+  phpinfo_scan: 0.74
   ipv6_probe: 0.70

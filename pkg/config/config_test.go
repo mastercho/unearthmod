@@ -184,7 +184,12 @@ var allCredentialEnvVars = []string{
 	"LEAKIX_API_KEY", "UNEARTH_LEAKIX_API_KEY",
 	"ONYPHE_API_KEY", "UNEARTH_ONYPHE_API_KEY",
 	"FULLHUNT_API_KEY", "UNEARTH_FULLHUNT_API_KEY",
+	"ZOOMEYE_API_KEY", "UNEARTH_ZOOMEYE_API_KEY",
+	"PDCP_API_KEY", "CHAOS_API_KEY", "UNEARTH_PDCP_API_KEY",
+	"VIRUSTOTAL_API_KEY", "VT_API_KEY", "UNEARTH_VIRUSTOTAL_API_KEY",
+	"URLSCAN_API_KEY", "UNEARTH_URLSCAN_API_KEY",
 	"OTX_API_KEY", "ALIENVAULT_OTX_API_KEY", "UNEARTH_OTX_API_KEY",
+	"GREYNOISE_API_KEY", "UNEARTH_GREYNOISE_API_KEY",
 }
 
 // clearCredentialEnv unsets every credential variable for the duration of the
@@ -194,6 +199,7 @@ func clearCredentialEnv(t *testing.T) {
 	for _, name := range allCredentialEnvVars {
 		t.Setenv(name, "")
 	}
+	t.Setenv("UNEARTH_ENV_FILE", filepath.Join(t.TempDir(), "missing.env"))
 }
 
 func TestLoadAPIKeys(t *testing.T) {
@@ -302,6 +308,47 @@ func TestLoadAPIKeys_EmptyEnv(t *testing.T) {
 	k := LoadAPIKeys()
 	if k.CensysPlatformPAT != "" || k.ShodanAPIKey != "" {
 		t.Errorf("expected empty fields, got %+v", k)
+	}
+}
+
+func TestLoadAPIKeys_DotEnvFile(t *testing.T) {
+	clearCredentialEnv(t)
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	data := strings.Join([]string{
+		"# local credentials",
+		`CENSYS_PLATFORM_PAT="pat-from-file"`,
+		"SHODAN_API_KEY=file-shodan",
+		"FOFA_EMAIL=ops@example.com # inline comment",
+		"FOFA_KEY='fofa-secret'",
+	}, "\n")
+	if err := os.WriteFile(envPath, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UNEARTH_ENV_FILE", envPath)
+
+	k := LoadAPIKeys()
+	if k.CensysPlatformPAT != "pat-from-file" || k.ShodanAPIKey != "file-shodan" {
+		t.Fatalf("dotenv keys not loaded: %+v", k)
+	}
+	if k.FOFAEmail != "ops@example.com" || k.FOFAKey != "fofa-secret" {
+		t.Fatalf("dotenv quoted/commented values not parsed: %+v", k)
+	}
+}
+
+func TestLoadAPIKeys_ProcessEnvWinsOverDotEnv(t *testing.T) {
+	clearCredentialEnv(t)
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(envPath, []byte("SHODAN_API_KEY=file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UNEARTH_ENV_FILE", envPath)
+	t.Setenv("SHODAN_API_KEY", "process")
+
+	k := LoadAPIKeys()
+	if k.ShodanAPIKey != "process" {
+		t.Fatalf("process env should win over .env, got %q", k.ShodanAPIKey)
 	}
 }
 

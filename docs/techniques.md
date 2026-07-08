@@ -427,6 +427,16 @@ Aggressive techniques touch the target directly. They may appear in the target's
 
 ---
 
+### `phpinfo_scan`
+
+**Tier:** Aggressive | **Weight:** 0.74 | **API key:** None
+
+**What it does:** Requests the common phpinfo endpoint paths from ProjectDiscovery's Nuclei `phpinfo-files` template and confirms pages with the same `PHP Extension` plus `PHP Version` matcher. When a phpinfo page is exposed, it extracts public non-CDN IPs from server-side fields such as `SERVER_ADDR` and `LOCAL_ADDR`.
+
+**Limitations:** Only fires when a phpinfo endpoint is publicly reachable. It deliberately ignores client-side fields such as `REMOTE_ADDR` so it does not report the scanner's own address.
+
+---
+
 ### `ipv6_probe`
 
 **Tier:** Aggressive | **Weight:** 0.70 | **API key:** None
