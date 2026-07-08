@@ -34,7 +34,6 @@ var knownTechniques = map[string]struct{}{
 	"fofa_cert":             {},
 	"netlas_cert":           {},
 	"criminalip_asset":      {},
-	"binaryedge_cert":       {},
 	"leakix_cert":           {},
 	"onyphe_cert":           {},
 	"fullhunt_asset":        {},
@@ -222,7 +221,6 @@ func LoadAPIKeys() techniques.APIKeys {
 		FOFAKey:           envFirst("FOFA_KEY", "UNEARTH_FOFA_KEY"),
 		NetlasAPIKey:      envFirst("NETLAS_API_KEY", "UNEARTH_NETLAS_API_KEY"),
 		CriminalIPKey:     envFirst("CRIMINALIP_API_KEY", "UNEARTH_CRIMINALIP_API_KEY"),
-		BinaryEdgeKey:     envFirst("BINARYEDGE_API_KEY", "UNEARTH_BINARYEDGE_API_KEY"),
 		LeakIXKey:         envFirst("LEAKIX_API_KEY", "UNEARTH_LEAKIX_API_KEY"),
 		OnypheKey:         envFirst("ONYPHE_API_KEY", "UNEARTH_ONYPHE_API_KEY"),
 		FullHuntKey:       envFirst("FULLHUNT_API_KEY", "UNEARTH_FULLHUNT_API_KEY"),
@@ -237,7 +235,7 @@ func LoadAPIKeys() techniques.APIKeys {
 
 // CredentialStatus reports, per service, whether usable credentials are set.
 // Keys: "censys", "shodan", "securitytrails", "viewdns", "fofa", "netlas",
-// "criminalip", "binaryedge", "leakix", "onyphe", "fullhunt", "zoomeye", "chaos",
+// "criminalip", "leakix", "onyphe", "fullhunt", "zoomeye", "chaos",
 // "virustotal", "urlscan", "otx". The "otx" entry is true when an AlienVault
 // OTX API key is present; that key powers higher-rate access to the
 // otx_passivedns technique (the technique itself runs without a key, via
@@ -250,8 +248,7 @@ func LoadAPIKeys() techniques.APIKeys {
 // Platform PAT is present; the "fofa" entry is true only when both the FOFA email
 // and key are present; the "netlas" entry is true when a Netlas API key is
 // present; the "criminalip" entry is true when a Criminal IP API key is present;
-// the "binaryedge" entry is true when a BinaryEdge API key is present; the
-// "leakix" entry is true when a LeakIX API key is present; the "onyphe"
+// the "leakix" entry is true when a LeakIX API key is present; the "onyphe"
 // entry is true when an Onyphe API key is present; the "fullhunt"
 // entry is true when a FullHunt API key is present. The legacy ID/secret
 // pair is no longer consulted: the Censys Search v2 API it authenticates is
@@ -265,7 +262,6 @@ func CredentialStatus(k techniques.APIKeys) map[string]bool {
 		"fofa":           k.FOFAEmail != "" && k.FOFAKey != "",
 		"netlas":         k.NetlasAPIKey != "",
 		"criminalip":     k.CriminalIPKey != "",
-		"binaryedge":     k.BinaryEdgeKey != "",
 		"leakix":         k.LeakIXKey != "",
 		"onyphe":         k.OnypheKey != "",
 		"fullhunt":       k.FullHuntKey != "",

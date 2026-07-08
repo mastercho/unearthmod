@@ -21,19 +21,19 @@ import (
 func init() { Register(leakIXCertTechnique{}) }
 
 // leakIXCertTechnique mirrors censys_cert, shodan_cert, fofa_cert,
-// netlas_cert, criminalip_asset, and binaryedge_cert but queries LeakIX
+// netlas_cert, and criminalip_asset but queries LeakIX
 // (leakix.net), an internet-scanning search engine and exposure database. It
 // takes the target's current TLS leaf-certificate SHA-1 fingerprint, asks
 // LeakIX for every scanned service that presents the same fingerprint, and
 // emits the non-CDN hits as origin candidates.
 //
-// Why LeakIX in addition to the existing six engines: LeakIX runs its own
+// Why LeakIX in addition to the existing engines: LeakIX runs its own
 // continuous internet-wide scan and indexes the leaf certificate it observed
 // per service, keyed under `ssl.certificate.fingerprint`. Its corpus overlaps
-// only partially with Shodan, Censys, FOFA, Netlas, Criminal IP, and
-// BinaryEdge — a misconfigured origin that leaks its real certificate may
-// surface in LeakIX when it is absent from the others. Coverage diversity is
-// the value, not redundancy. LeakIX offers a free tier with a daily request
+// only partially with Shodan, Censys, FOFA, Netlas, and Criminal IP — a
+// misconfigured origin that leaks its real certificate may surface in LeakIX
+// when it is absent from the others. Coverage diversity is the value, not
+// redundancy. LeakIX offers a free tier with a daily request
 // allowance, so it is reachable without a paid plan.
 //
 // LEAKIX API endpoint — isolated in a single constant per the codebase's
@@ -42,9 +42,7 @@ func init() { Register(leakIXCertTechnique{}) }
 // the `q` parameter using LeakIX's Lucene-style filter syntax, and selects
 // the service scope with `scope=service`. The `ssl.certificate.fingerprint`
 // field matches the indexed leaf certificate's SHA-1 fingerprint — the same
-// lowercase-hex SHA-1 that shodan_cert and binaryedge_cert pivot on (LeakIX,
-// like Shodan and BinaryEdge, indexes the SHA-1 form), so the techniques
-// corroborate.
+// lowercase-hex SHA-1 that shodan_cert pivots on, so the techniques corroborate.
 const (
 	leakIXSearchURL = "https://leakix.net/search"
 	leakIXCertField = "ssl.certificate.fingerprint"

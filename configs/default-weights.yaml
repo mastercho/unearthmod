@@ -10,7 +10,6 @@ weights:
   fofa_cert: 0.80
   netlas_cert: 0.75
   criminalip_asset: 0.70
-  binaryedge_cert: 0.72
   leakix_cert: 0.71
   onyphe_cert: 0.69
   fullhunt_asset: 0.70

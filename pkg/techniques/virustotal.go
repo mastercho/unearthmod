@@ -23,10 +23,10 @@ func init() { Register(virusTotalPassiveDNSTechnique{}) }
 // VirusTotal has accumulated for the target apex domain, and emits the
 // non-CDN, deduplicated IPs as origin candidates.
 //
-// Why VirusTotal passive-DNS in addition to the existing eleven backends: a
-// genuinely different axis of coverage. The seven certificate-fingerprint
+// Why VirusTotal passive-DNS in addition to the existing backends: a
+// genuinely different axis of coverage. The certificate-fingerprint
 // engines (censys_cert, shodan_cert, fofa_cert, netlas_cert, criminalip_asset,
-// binaryedge_cert, leakix_cert, onyphe_cert) all pivot on the target's
+// leakix_cert, onyphe_cert) all pivot on the target's
 // *current* TLS leaf certificate — they miss any origin that rotated its
 // certificate, never reused the front-door cert, or was decommissioned. The
 // three asset enumerators (fullhunt_asset, zoomeye_asset, chaos_asset) pivot

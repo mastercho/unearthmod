@@ -22,9 +22,9 @@ func init() { Register(greyNoiseTechnique{}) }
 // intelligence platform that runs a planetary sensor mesh and indexes every
 // IP it has observed scanning or interacting with the public internet, with
 // per-IP metadata (reverse DNS, organization, ASN, classification). Unlike
-// the eight certificate-fingerprint engines (censys_cert, shodan_cert,
-// fofa_cert, netlas_cert, criminalip_asset, binaryedge_cert, leakix_cert,
-// onyphe_cert), and unlike the asset enumerators (fullhunt_asset,
+// the certificate-fingerprint engines (censys_cert, shodan_cert,
+// fofa_cert, netlas_cert, criminalip_asset, leakix_cert, onyphe_cert), and
+// unlike the asset enumerators (fullhunt_asset,
 // zoomeye_asset, chaos_asset), GreyNoise here is NOT a cert pivot and not a
 // domain-keyed asset enumerator either: it is a GNQL (GreyNoise Query
 // Language) search on the rDNS-and-organization metadata GreyNoise has

@@ -471,8 +471,6 @@ func hasKeyFor(name string, k techniques.APIKeys) bool {
 		return k.NetlasAPIKey != ""
 	case "criminalip_asset":
 		return k.CriminalIPKey != ""
-	case "binaryedge_cert":
-		return k.BinaryEdgeKey != ""
 	case "leakix_cert":
 		return k.LeakIXKey != ""
 	case "onyphe_cert":

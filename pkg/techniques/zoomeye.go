@@ -19,8 +19,8 @@ func init() { Register(zoomEyeTechnique{}) }
 
 // zoomEyeTechnique queries ZoomEye (zoomeye.org), a cyberspace search engine
 // in the same family as Censys, Shodan, FOFA, Netlas and Criminal IP. Unlike
-// the seven certificate-fingerprint engines (censys_cert, shodan_cert,
-// fofa_cert, netlas_cert, criminalip_asset, binaryedge_cert, leakix_cert),
+// the certificate-fingerprint engines (censys_cert, shodan_cert,
+// fofa_cert, netlas_cert, criminalip_asset, leakix_cert, onyphe_cert),
 // ZoomEye here is NOT a cert-fingerprint pivot — it is a domain → host-asset
 // enumerator, the same shape as fullhunt_asset: given the target apex domain
 // it asks ZoomEye for every host it has crawled under that domain and the IPs

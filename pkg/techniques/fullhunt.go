@@ -20,9 +20,8 @@ func init() { Register(fullHuntTechnique{}) }
 // fullHuntTechnique queries FullHunt (fullhunt.io), an attack-surface
 // management platform that continuously crawls the internet and maps every
 // host it has observed under a domain to the IP addresses it resolved them
-// to. Unlike the seven certificate-fingerprint engines (censys_cert,
-// shodan_cert, fofa_cert, netlas_cert, criminalip_asset, binaryedge_cert,
-// leakix_cert), FullHunt is NOT a cert-fingerprint pivot — its public API has
+// to. Unlike the certificate-fingerprint engines (censys_cert, shodan_cert,
+// fofa_cert, netlas_cert, criminalip_asset, leakix_cert, onyphe_cert), FullHunt is NOT a cert-fingerprint pivot — its public API has
 // no certificate-fingerprint search. Instead it is a domain → host-asset
 // enumerator: given the target apex domain it returns FullHunt's recorded
 // host inventory, each host carrying the IP(s) FullHunt observed it on.

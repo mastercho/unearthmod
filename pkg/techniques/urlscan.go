@@ -22,10 +22,10 @@ func init() { Register(urlscanAssetTechnique{}) }
 // recorded against the target domain and emits the non-CDN page-serving IPs as
 // origin candidates.
 //
-// Why URLScan.io complements the existing twelve OSINT backends: a genuinely
-// different axis of coverage. The eight certificate-fingerprint engines
+// Why URLScan.io complements the existing OSINT backends: a genuinely
+// different axis of coverage. The certificate-fingerprint engines
 // (censys_cert, shodan_cert, fofa_cert, netlas_cert, criminalip_asset,
-// binaryedge_cert, leakix_cert, onyphe_cert) all pivot on the target's *current*
+// leakix_cert, onyphe_cert) all pivot on the target's *current*
 // TLS leaf certificate — they miss any origin that rotated its certificate,
 // never reused the front-door cert, or was decommissioned. The asset
 // enumerators (fullhunt_asset, zoomeye_asset, chaos_asset) pivot on host

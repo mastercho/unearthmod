@@ -23,12 +23,12 @@ func init() { Register(otxPassiveDNSTechnique{}) }
 // hostname→IP observation OTX has accumulated for the target apex domain and
 // emits the non-CDN, deduplicated IPs as origin candidates.
 //
-// Why AlienVault OTX in addition to the existing thirteen backends: a
+// Why AlienVault OTX in addition to the existing backends: a
 // genuinely different axis of coverage, on two distinct dimensions.
 //
-// First, the corpus axis. The eight certificate-fingerprint engines
+// First, the corpus axis. The certificate-fingerprint engines
 // (censys_cert, shodan_cert, fofa_cert, netlas_cert, criminalip_asset,
-// binaryedge_cert, leakix_cert, onyphe_cert) all pivot on the target's
+// leakix_cert, onyphe_cert) all pivot on the target's
 // *current* TLS leaf certificate — they miss any origin that rotated its
 // certificate, never reused the front-door cert, or was decommissioned. The
 // three host-inventory enumerators (fullhunt_asset, zoomeye_asset, chaos_asset)
@@ -75,15 +75,16 @@ func init() { Register(otxPassiveDNSTechnique{}) }
 // indicator) typically returns a 4xx status with a JSON envelope carrying
 // `detail` / `error` / `message` fields.
 const (
-	otxPassiveDNSURL  = "https://otx.alienvault.com/api/v1/indicators/domain/%s/passive_dns"
-	otxPassiveDNSTTL  = 1 * time.Hour
+	otxPassiveDNSURL   = "https://otx.alienvault.com/api/v1/indicators/domain/%s/passive_dns"
+	otxPassiveDNSTTL   = 1 * time.Hour
 	otxPassiveDNSTName = "otx_passivedns"
 )
 
 type otxPassiveDNSTechnique struct{}
 
-func (otxPassiveDNSTechnique) Name() string         { return otxPassiveDNSTName }
-func (otxPassiveDNSTechnique) Tier() Tier           { return TierPassive }
+func (otxPassiveDNSTechnique) Name() string { return otxPassiveDNSTName }
+func (otxPassiveDNSTechnique) Tier() Tier   { return TierPassive }
+
 // RequiresAPIKey reports false: the OTX passive-DNS endpoint is publicly
 // accessible without credentials. A key is honored when present (lifting the
 // per-IP rate limit) but never required.

@@ -19,10 +19,10 @@ func init() { Register(chaosTechnique{}) }
 
 // chaosTechnique queries ProjectDiscovery's Chaos dataset
 // (chaos.projectdiscovery.io), the free subdomain corpus that powers
-// `subfinder`. Like fullhunt_asset and zoomeye_asset — and unlike the seven
+// `subfinder`. Like fullhunt_asset and zoomeye_asset — and unlike the
 // certificate-fingerprint engines (censys_cert, shodan_cert, fofa_cert,
-// netlas_cert, criminalip_asset, binaryedge_cert, leakix_cert) — Chaos is NOT
-// a cert pivot. It is a domain → subdomain enumerator.
+// netlas_cert, criminalip_asset, leakix_cert, onyphe_cert) — Chaos is NOT a
+// cert pivot. It is a domain → subdomain enumerator.
 //
 // Chaos differs from fullhunt_asset and zoomeye_asset in one important way:
 // those backends return host→IP records directly, while Chaos returns only the

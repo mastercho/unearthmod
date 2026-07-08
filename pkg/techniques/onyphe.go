@@ -19,17 +19,17 @@ import (
 func init() { Register(onypheCertTechnique{}) }
 
 // onypheCertTechnique mirrors censys_cert, shodan_cert, fofa_cert,
-// netlas_cert, criminalip_asset, binaryedge_cert, and leakix_cert but
+// netlas_cert, criminalip_asset, and leakix_cert but
 // queries Onyphe (onyphe.io), a French internet-scanning search engine
 // that markets itself as a "cyber defense search engine" and indexes its
 // own datascan corpus. It takes the target's current TLS leaf-certificate
 // SHA-256 fingerprint, asks Onyphe for every scanned service that presents
 // the same fingerprint, and emits the non-CDN hits as origin candidates.
 //
-// Why Onyphe in addition to the existing seven engines: Onyphe runs its own
+// Why Onyphe in addition to the existing engines: Onyphe runs its own
 // continuous internet-wide datascan ingestion pipeline that overlaps only
-// partially with Shodan, Censys, FOFA, Netlas, Criminal IP, BinaryEdge, and
-// LeakIX. Its scan footprint is meaningfully European-weighted (Onyphe is
+// partially with Shodan, Censys, FOFA, Netlas, Criminal IP, and LeakIX. Its
+// scan footprint is meaningfully European-weighted (Onyphe is
 // based in France) compared with the US-centric Shodan/Censys and the
 // APAC-weighted FOFA/ZoomEye, so a misconfigured European-hosted origin
 // that leaks its real certificate may surface in Onyphe when it is absent
