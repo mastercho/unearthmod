@@ -7,6 +7,8 @@
 
 **Unearth the real origin server hiding behind a CDN.**
 
+**MTH mod of Unearth** — this fork adds extra origin-discovery backends, `.env` credential loading, noisier-provider hardening, and active origin-confirmation improvements.
+
 `unearth` discovers origin IPs by running multiple recon techniques in parallel — certificate transparency pivots, DNS history, SPF/MX analysis, subdomain enumeration, email `Received:`-header mining, exposure probes, and more — then ranks candidate IPs by how many techniques independently agree. The result is a scored list of origin candidates, from most to least confident.
 
 ---
@@ -57,6 +59,8 @@ The default (`passive`) never touches the target. `--active` and `--aggressive` 
 
 **Ranking:** each technique declares a reliability weight. When two or more techniques surface the same IP independently, their weights combine with a [noisy-OR](docs/ranking.md) rule — independent corroboration raises confidence without one weak signal dominating. The `corroboration` field counts how many techniques agreed; `single_source: true` flags lone hits. See [docs/ranking.md](docs/ranking.md).
 
+**Candidates vs confirmed origins:** passive and API-backed techniques produce origin candidates. Active validation can upgrade a candidate to a confirmed result: `host_header` fetches the current front-door page, probes candidate IPs over HTTP/HTTPS with `Host: target` and target SNI, normalizes page text/title, compares HTML similarity, TLS certificate overlap, headers, and status, then marks the candidate with a `validation` block when the combined score is at least 60%. In table output those rows show `confirmed <score>`; JSON/JSONL includes the full component scores.
+
 ---
 
 ## Techniques
@@ -71,7 +75,7 @@ The default (`passive`) never touches the target. `--active` and `--aggressive` 
 | `censys_cert` | Passive | Yes — `CENSYS_PLATFORM_PAT` | 0.90 | Censys Platform certificate-fingerprint search |
 | `censys_ipv6` | Passive | Yes — `CENSYS_PLATFORM_PAT` | 0.78 | Censys Platform IPv6 asset-discovery — pivots on the target apex via `host.dns.names` and emits only non-CDN IPv6 hits, catching dual-stack AAAA-leak origins that never reused the front-door certificate and so escape `censys_cert` |
 | `dns_history` | Passive | Yes — `SECURITYTRAILS_API_KEY` or `VIEWDNS_API_KEY` | 0.65 | Historical DNS A/AAAA records |
-| `host_header` | Active | No | 0.85 | HTTP host-header bypass: connects to candidate IPs with `Host: target` |
+| `host_header` | Active | No | 0.85 | HTTP host-header confirmation: probes candidate IPs on HTTP/HTTPS with `Host: target` and target SNI, then confirms matches using HTML/text similarity, TLS certificate overlap, headers, and status scoring |
 | `banner_grab` | Active | No | 0.45 | SSH and HTTP banner fingerprinting of candidate IPs |
 | `shodan_cert` | Active | Yes — `SHODAN_API_KEY` | 0.85 | Shodan certificate-fingerprint search |
 | `shodan_cve` | Passive | Yes — `SHODAN_API_KEY` + operator-supplied `--cve` | 0.78 | Shodan CVE-scoped host search — given a CVE id (e.g. `CVE-2024-1709`) and the target apex, asks Shodan for every host indexed under `hostname:<target>` that is known by Shodan's vulnerability scanner to be affected by that CVE, and emits the non-CDN hits; orthogonal to `shodan_cert` (a patched CDN-fronted edge does not match, an unpatched forgotten origin or staging host under the same apex does), purpose-built for disclosure-window recon |
@@ -144,6 +148,12 @@ The tool announces which keys are loaded (or absent) on every run. Key-required 
 > **FOFA note:** `fofa_cert` needs **both** `FOFA_EMAIL` and `FOFA_KEY` (generated from your FOFA account's Personal Center → API page); with only one set the technique is skipped. FOFA's free tier exposes the certificate search; when an account is out of query quota FOFA answers `HTTP 200` with an `error` flag, which the technique treats as a clean tier-insufficient skip rather than a failure. FOFA's heavier APAC scan coverage complements the US-centric Shodan/Censys indexes — its value is reach, not redundancy.
 
 > **Netlas note:** `netlas_cert` needs `NETLAS_API_KEY` (generated from your Netlas account's Profile → API key page); without it the technique is skipped. Netlas offers a free tier with a daily request allowance — when that allowance is exhausted the API answers `HTTP 429` (or a quota message), which the technique treats as a clean tier-insufficient skip rather than a failure. Netlas indexes domain names alongside IPs and maintains its own scan corpus, so it surfaces origins that may be absent from Shodan, Censys, and FOFA — coverage diversity, not redundancy.
+>
+> If verbose output says Netlas returned `API key not found`, the request reached Netlas but the loaded value was rejected. Verify that no process environment variable is overriding `.env`, then test the key directly:
+>
+> ```sh
+> curl -H "Authorization: Bearer $NETLAS_API_KEY" https://app.netlas.io/api/users/current/
+> ```
 
 > **Criminal IP note:** `criminalip_asset` needs `CRIMINALIP_API_KEY` (generated from your Criminal IP account's My Information → API Key page); without it the technique is skipped. Criminal IP offers a free tier with a monthly request allowance — when that allowance is exhausted, or the plan lacks the banner-search capability, the API answers with a quota/permission message (often `HTTP 200` carrying a non-200 `status` field), which the technique treats as a clean tier-insufficient skip rather than a failure. Criminal IP runs its own AI-scored scan corpus over 4.2B+ IPs, so it surfaces origins that may be absent from Shodan, Censys, FOFA, and Netlas — coverage diversity, not redundancy.
 

@@ -22,7 +22,8 @@ require (
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	golang.org/x/sys v0.20.0 // indirect
+	golang.org/x/net v0.30.0 // indirect
+	golang.org/x/sys v0.26.0 // indirect
 	modernc.org/gc/v3 v3.1.2 // indirect
 	modernc.org/libc v1.54.5 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

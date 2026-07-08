@@ -17,7 +17,7 @@ func TestTableSink_Colorized(t *testing.T) {
 	res := &unearth.Result{
 		Target: "x",
 		Candidates: []unearth.ScoredIP{
-			{IP: "1.1.1.1", Score: 0.95, Corroboration: 3, Techniques: []unearth.TechniqueHit{{Name: "a"}}},
+			{IP: "1.1.1.1", Score: 0.95, Corroboration: 3, Validation: &unearth.Validation{Status: "confirmed", Score: 0.91}, Techniques: []unearth.TechniqueHit{{Name: "a"}}},
 			{IP: "2.2.2.2", Score: 0.60, Corroboration: 1, Techniques: []unearth.TechniqueHit{{Name: "b"}}},
 			{IP: "3.3.3.3", Score: 0.20, Corroboration: 1, Techniques: []unearth.TechniqueHit{{Name: "c"}}},
 		},
@@ -29,7 +29,7 @@ func TestTableSink_Colorized(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := out.String()
-	for _, want := range []string{ansiGreen, ansiYellow, ansiRed, "warn-x", "boom"} {
+	for _, want := range []string{ansiGreen, ansiYellow, ansiRed, "confirmed 0.91", "candidate", "warn-x", "boom"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("table output missing %q\n---\n%s", want, got)
 		}
@@ -55,6 +55,7 @@ func TestVerbose_EmitsResultMetaOnStderrForJSONL(t *testing.T) {
 		r.Warnings = []string{"w1"}
 		r.Errors = []unearth.TechniqueErr{{Technique: "t", Err: "e", Reason: "missing_api_key"}}
 		r.TechniqueRuns = []unearth.TechniqueRun{{Technique: "phpinfo_scan", Status: "ok", Candidates: 0}}
+		r.Candidates[0].Validation = &unearth.Validation{Status: "confirmed", Technique: "host_header", Score: 0.82}
 		return r, nil
 	})
 	code, stdout, stderr := captured(t, "--verbose", "example.test")
@@ -68,8 +69,8 @@ func TestVerbose_EmitsResultMetaOnStderrForJSONL(t *testing.T) {
 	if strings.Contains(stdout, "warn:") || strings.Contains(stdout, "CDN:") {
 		t.Errorf("stdout should not carry result metadata: %q", stdout)
 	}
-	// stderr should mention CDN, run summary, warning, and error reason.
-	for _, want := range []string{"CDN: cloudflare", "run[phpinfo_scan]", "candidates=0", "warn:", "missing_api_key"} {
+	// stderr should mention CDN, run summary, confirmation, warning, and error reason.
+	for _, want := range []string{"CDN: cloudflare", "run[phpinfo_scan]", "candidates=0", "confirmed[203.0.113.1]", "host_header", "warn:", "missing_api_key"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}

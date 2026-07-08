@@ -2,11 +2,16 @@ package techniques
 
 import (
 	"context"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 )
 
 // hostHeaderStubRT routes requests by URL host: requests to the baseline
@@ -14,16 +19,42 @@ import (
 // a direct-IP probe and is matched by URL.
 type hostHeaderStubRT struct {
 	baselineBody string
+	baselineCode int
+	baselineHead http.Header
+	baselineURL  string
+	byURL        map[string]func(*http.Request) (*http.Response, error)
 	byHost       map[string]func(*http.Request) (*http.Response, error)
 }
 
 func (s *hostHeaderStubRT) RoundTrip(req *http.Request) (*http.Response, error) {
 	url := req.URL.String()
-	if url == "https://example.test/" && req.Host == "example.test" {
-		return stubResponse(200, s.baselineBody), nil
+	baselineURL := s.baselineURL
+	if baselineURL == "" {
+		baselineURL = "https://example.test/"
+	}
+	if url == baselineURL && req.Host == "example.test" {
+		code := s.baselineCode
+		if code == 0 {
+			code = 200
+		}
+		resp := stubResponse(code, s.baselineBody)
+		for k, vals := range s.baselineHead {
+			for _, v := range vals {
+				resp.Header.Add(k, v)
+			}
+		}
+		return resp, nil
+	}
+	if fn, ok := s.byURL[url]; ok {
+		return fn(req)
 	}
 	if fn, ok := s.byHost[req.URL.Host]; ok {
 		return fn(req)
+	}
+	if h, _, err := net.SplitHostPort(req.URL.Host); err == nil {
+		if fn, ok := s.byHost[h]; ok {
+			return fn(req)
+		}
 	}
 	return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("404"))}, nil
 }
@@ -34,7 +65,7 @@ func (s *hostHeaderStubRT) RoundTrip(req *http.Request) (*http.Response, error) 
 func withHostHeaderClient(t *testing.T, hc *http.Client) {
 	t.Helper()
 	prev := newHostHeaderInsecureClient
-	newHostHeaderInsecureClient = func() *http.Client { return hc }
+	newHostHeaderInsecureClient = func(string) *http.Client { return hc }
 	t.Cleanup(func() { newHostHeaderInsecureClient = prev })
 }
 
@@ -49,16 +80,14 @@ func TestHostHeader_ConfirmsMatchingOrigin(t *testing.T) {
 	body := "<html><body>" + strings.Repeat("x", 500) + "</body></html>"
 	rt := &hostHeaderStubRT{
 		baselineBody: body,
-		byHost: map[string]func(*http.Request) (*http.Response, error){
-			"203.0.113.50": func(req *http.Request) (*http.Response, error) {
+		byURL: map[string]func(*http.Request) (*http.Response, error){
+			"https://203.0.113.50:443/": func(req *http.Request) (*http.Response, error) {
 				if req.Host != "example.test" {
 					t.Errorf("Host header: got %q want example.test", req.Host)
 				}
-				// Same body, no CDN headers → match.
 				return stubResponse(200, body), nil
 			},
-			"203.0.113.51": func(_ *http.Request) (*http.Response, error) {
-				// Different body → no match.
+			"https://203.0.113.51:443/": func(_ *http.Request) (*http.Response, error) {
 				return stubResponse(200, "other site"), nil
 			},
 		},
@@ -81,15 +110,21 @@ func TestHostHeader_ConfirmsMatchingOrigin(t *testing.T) {
 	if !strings.Contains(out[0].Evidence, "host_header") {
 		t.Errorf("evidence: %q", out[0].Evidence)
 	}
+	v, ok := out[0].Metadata["validation"].(map[string]any)
+	if !ok || v["status"] != "confirmed" {
+		t.Fatalf("validation metadata missing: %+v", out[0].Metadata)
+	}
+	if got := v["score"].(float64); got < hostHeaderConfirmThreshold {
+		t.Fatalf("validation score = %v, want >= %.2f", got, hostHeaderConfirmThreshold)
+	}
 }
 
 func TestHostHeader_IgnoresCDNResponse(t *testing.T) {
 	body := strings.Repeat("y", 500)
 	rt := &hostHeaderStubRT{
 		baselineBody: body,
-		byHost: map[string]func(*http.Request) (*http.Response, error){
-			"203.0.113.60": func(_ *http.Request) (*http.Response, error) {
-				// CDN markers — even if body matches, must NOT be confirmed.
+		byURL: map[string]func(*http.Request) (*http.Response, error){
+			"https://203.0.113.60:443/": func(_ *http.Request) (*http.Response, error) {
 				resp := stubResponse(200, body)
 				resp.Header.Set("Cf-Ray", "abc-DFW")
 				return resp, nil
@@ -111,8 +146,8 @@ func TestHostHeader_FiltersCDNSeedIPs(t *testing.T) {
 	// 104.16.0.5 is a Cloudflare IP — the worker must skip it.
 	rt := &hostHeaderStubRT{
 		baselineBody: "x",
-		byHost: map[string]func(*http.Request) (*http.Response, error){
-			"104.16.0.5": func(_ *http.Request) (*http.Response, error) {
+		byURL: map[string]func(*http.Request) (*http.Response, error){
+			"https://104.16.0.5:443/": func(_ *http.Request) (*http.Response, error) {
 				t.Error("CDN IP should not be probed")
 				return stubResponse(200, "x"), nil
 			},
@@ -126,6 +161,88 @@ func TestHostHeader_FiltersCDNSeedIPs(t *testing.T) {
 	})
 	if len(out) != 0 {
 		t.Errorf("CDN seed should produce no candidate, got %+v", out)
+	}
+}
+
+func TestHostHeader_HTTPFallbackAndTitleSignal(t *testing.T) {
+	base := `<html><head><title>Printer Inks</title></head><body>` + strings.Repeat("baseline copy ", 20) + `</body></html>`
+	rt := &hostHeaderStubRT{
+		baselineBody: base,
+		baselineHead: http.Header{"Server": []string{"origin"}},
+		byURL: map[string]func(*http.Request) (*http.Response, error){
+			"https://203.0.113.70:443/": func(*http.Request) (*http.Response, error) {
+				return nil, io.ErrUnexpectedEOF
+			},
+			"http://203.0.113.70:80/": func(req *http.Request) (*http.Response, error) {
+				if req.Host != "example.test" {
+					t.Errorf("Host header: got %q", req.Host)
+				}
+				resp := stubResponse(200, `<html><head><title>Printer Inks</title></head><body>`+strings.Repeat("different but same site shell ", 12)+`</body></html>`)
+				resp.Header.Set("Server", "origin")
+				return resp, nil
+			},
+		},
+	}
+	hc := &http.Client{Transport: rt}
+	withHostHeaderClient(t, hc)
+	out, err := hostHeaderTechnique{}.Run(context.Background(), "example.test", RunOptions{
+		HTTPClient: hc,
+		SeedIPs:    []netip.Addr{netip.MustParseAddr("203.0.113.70")},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(out) != 1 || !strings.Contains(out[0].Evidence, "via http:80") {
+		t.Fatalf("want HTTP title/header confirmation, got %+v", out)
+	}
+}
+
+func TestHostHeader_RejectsGenericErrorMatch(t *testing.T) {
+	body := "<html><body>not found</body></html>"
+	rt := &hostHeaderStubRT{
+		baselineBody: body,
+		baselineCode: 404,
+		byURL: map[string]func(*http.Request) (*http.Response, error){
+			"https://203.0.113.80:443/": func(*http.Request) (*http.Response, error) {
+				return stubResponse(404, body), nil
+			},
+		},
+	}
+	hc := &http.Client{Transport: rt}
+	withHostHeaderClient(t, hc)
+	out, err := hostHeaderTechnique{}.Run(context.Background(), "example.test", RunOptions{
+		HTTPClient: hc,
+		SeedIPs:    []netip.Addr{netip.MustParseAddr("203.0.113.80")},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("generic 404 match should not confirm: %+v", out)
+	}
+}
+
+func TestHostHeader_ScoresCertsAndHeaders(t *testing.T) {
+	cert := &x509.Certificate{
+		SerialNumber: bigInt(7),
+		Subject:      pkix.Name{CommonName: "example.test"},
+		DNSNames:     []string{"example.test", "www.example.test"},
+	}
+	base := baseline{
+		Status:  200,
+		Text:    strings.Repeat("same text ", 20),
+		Header:  http.Header{"Server": []string{"origin"}, "Set-Cookie": []string{"sid=1"}},
+		TLSCert: cert,
+	}
+	probe := hostHeaderProbe{
+		Status:  200,
+		Text:    strings.Repeat("same text ", 20),
+		Header:  http.Header{"Server": []string{"origin"}, "Set-Cookie": []string{"sid=2"}},
+		TLSCert: cert,
+	}
+	score := scoreHostHeaderProbe(base, probe)
+	if score.HTML != 1 || score.Cert != 1 || score.Headers != 1 || score.Overall < 0.99 {
+		t.Fatalf("unexpected score: %+v", score)
 	}
 }
 
@@ -155,4 +272,9 @@ func TestHostHeaderTechnique_Metadata(t *testing.T) {
 	if !h.ConsumesCandidates() {
 		t.Error("host_header should opt into the consumer phase")
 	}
+	if h.TimeoutOverride() <= 30*time.Second {
+		t.Errorf("timeout override should widen host_header budget, got %s", h.TimeoutOverride())
+	}
 }
+
+func bigInt(v int64) *big.Int { return big.NewInt(v) }

@@ -72,6 +72,22 @@ type TechniqueHit struct {
 	Evidence string  `json:"evidence"`
 }
 
+// Validation records an active confirmation signal for a candidate IP.
+type Validation struct {
+	Status      string  `json:"status"`
+	Technique   string  `json:"technique"`
+	Method      string  `json:"method"`
+	URL         string  `json:"url,omitempty"`
+	Scheme      string  `json:"scheme,omitempty"`
+	Port        int     `json:"port,omitempty"`
+	Score       float64 `json:"score"`
+	HTMLScore   float64 `json:"html_score,omitempty"`
+	CertScore   float64 `json:"cert_score,omitempty"`
+	HeaderScore float64 `json:"header_score,omitempty"`
+	TitleMatch  bool    `json:"title_match,omitempty"`
+	Threshold   float64 `json:"threshold,omitempty"`
+}
+
 // ScoredIP is a single ranked candidate origin IP.
 type ScoredIP struct {
 	// IP is the candidate origin address.
@@ -86,6 +102,9 @@ type ScoredIP struct {
 	SingleSource bool `json:"single_source"`
 	// Techniques lists every technique that contributed, with its weight.
 	Techniques []TechniqueHit `json:"techniques"`
+	// Validation is present when an active technique confirmed the candidate
+	// by probing it directly, rather than merely discovering it as a candidate.
+	Validation *Validation `json:"validation,omitempty"`
 }
 
 // TechniqueErr records a technique that failed or was skipped during a run.
@@ -264,6 +283,11 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 					Weight:   w,
 					Evidence: c.Evidence,
 				})
+				if v := validationFromMetadata(c.Metadata); v != nil {
+					if g.Validation == nil || v.Score > g.Validation.Score {
+						g.Validation = v
+					}
+				}
 			}
 		}
 	}
@@ -486,6 +510,83 @@ func reasonForErr(err error) string {
 	default:
 		return ""
 	}
+}
+
+func validationFromMetadata(md map[string]any) *Validation {
+	raw, ok := md["validation"]
+	if !ok {
+		return nil
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	status := metaString(m, "status")
+	if status == "" {
+		return nil
+	}
+	return &Validation{
+		Status:      status,
+		Technique:   metaString(m, "technique"),
+		Method:      metaString(m, "method"),
+		URL:         metaString(m, "url"),
+		Scheme:      metaString(m, "scheme"),
+		Port:        metaInt(m, "port"),
+		Score:       metaFloat(m, "score"),
+		HTMLScore:   metaFloat(m, "html_score"),
+		CertScore:   metaFloat(m, "cert_score"),
+		HeaderScore: metaFloat(m, "header_score"),
+		TitleMatch:  metaBool(m, "title_match"),
+		Threshold:   metaFloat(m, "threshold"),
+	}
+}
+
+func metaString(m map[string]any, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+func metaFloat(m map[string]any, key string) float64 {
+	switch v := m[key].(type) {
+	case float64:
+		return v
+	case float32:
+		return float64(v)
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case int32:
+		return float64(v)
+	default:
+		return 0
+	}
+}
+
+func metaInt(m map[string]any, key string) int {
+	switch v := m[key].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case int32:
+		return int(v)
+	case float64:
+		return int(v)
+	case float32:
+		return int(v)
+	default:
+		return 0
+	}
+}
+
+func metaBool(m map[string]any, key string) bool {
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	return false
 }
 
 // techniqueSelector resolves the technique list for a given tier. The

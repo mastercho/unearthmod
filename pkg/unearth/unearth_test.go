@@ -236,6 +236,47 @@ func TestDiscover_RecordsZeroCandidateTechniqueRun(t *testing.T) {
 	}
 }
 
+func TestDiscover_PreservesValidationMetadata(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "host_header", weight: 0.85, candidates: []techniques.Candidate{
+			{
+				IP:       "203.0.113.88",
+				Evidence: "confirmed",
+				Metadata: map[string]any{
+					"validation": map[string]any{
+						"status":       "confirmed",
+						"technique":    "host_header",
+						"method":       "host_header",
+						"url":          "https://203.0.113.88:443/",
+						"scheme":       "https",
+						"port":         443,
+						"score":        0.82,
+						"html_score":   0.74,
+						"cert_score":   1.0,
+						"header_score": 0.33,
+						"title_match":  true,
+						"threshold":    0.60,
+					},
+				},
+			},
+		}},
+	)
+	res, err := Discover(context.Background(), "x", testOpts())
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Candidates) != 1 {
+		t.Fatalf("Candidates: %+v", res.Candidates)
+	}
+	v := res.Candidates[0].Validation
+	if v == nil || v.Status != "confirmed" || v.Technique != "host_header" || v.Port != 443 {
+		t.Fatalf("validation not preserved: %+v", v)
+	}
+	if v.Score != 0.82 || v.HTMLScore != 0.74 || v.CertScore != 1.0 || v.HeaderScore != 0.33 || !v.TitleMatch {
+		t.Fatalf("validation scores not preserved: %+v", v)
+	}
+}
+
 func TestHasKeyFor_FaviconHashUsesShodanOrCensys(t *testing.T) {
 	if !hasKeyFor("favicon_hash", techniques.APIKeys{ShodanAPIKey: "shodan"}) {
 		t.Fatal("favicon_hash should run with Shodan key")

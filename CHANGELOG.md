@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.5] — 2026-07-08
+
+### Added
+
+- Added explicit `validation` metadata for actively confirmed origin candidates and table/verbose output labels that distinguish confirmed origins from passive candidates.
+- Documented this repository as the MTH mod of Unearth and added candidate-vs-confirmed-origin guidance to the README.
+
+### Changed
+
+- Upgraded `host_header` into a scored origin validator: it probes candidate IPs across HTTP/HTTPS ports with `Host: target` and target SNI, normalizes HTML text/title, compares text similarity, TLS certificate overlap, headers, and status, then confirms matches at a 60% threshold.
+- Reused the stronger Host-header validator from `asn_sweep` so prefix-sweep hits carry the same confirmation metadata.
+
+### Fixed
+
+- Added clearer Netlas key-rejection diagnostics and README self-test guidance for `API key not found` responses.
+
 ## [1.0.4] — 2026-07-08
 
 ### Fixed
@@ -143,3 +159,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [1.0.2]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.2
 [1.0.3]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.3
 [1.0.4]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.4
+[1.0.5]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.5

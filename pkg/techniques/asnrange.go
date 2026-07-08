@@ -205,21 +205,20 @@ func (asnSweepTechnique) Run(ctx context.Context, target string, opts RunOptions
 		_ = totalIPs // warning logged via evidence on returned candidates
 	}
 
+	targetHost := canonicalTargetHost(target)
 	// Fetch the baseline of what the target's front door looks like.
-	base, err := fetchBaseline(ctx, target, hc)
+	base, err := fetchBaseline(ctx, targetHost, hc)
 	if err != nil {
 		return nil, fmt.Errorf("asn_sweep baseline: %w", err)
 	}
 
 	// Build a dedicated TLS-skip client for direct-IP probes.
-	insecure := newHostHeaderInsecureClient()
+	insecure := newHostHeaderInsecureClient(targetHost)
 
 	// Step 4: probe IPs in the parsed prefixes.
 	type probeJob struct{ ip netip.Addr }
 	type probeResult struct {
-		ip       netip.Addr
-		evidence string
-		ok       bool
+		candidate Candidate
 	}
 
 	in := make(chan probeJob, asnSweepProbeWorkers)
@@ -238,12 +237,12 @@ func (asnSweepTechnique) Run(ctx context.Context, target string, opts RunOptions
 				if isReservedAddr(ip) {
 					continue
 				}
-				ev, matched := probeIPForHost(ctx, insecure, ip, target, base)
+				cand, matched := probeIPForHost(ctx, insecure, ip, targetHost, base)
 				if !matched {
 					continue
 				}
 				select {
-				case out <- probeResult{ip: ip, evidence: ev, ok: true}:
+				case out <- probeResult{candidate: cand}:
 				case <-ctx.Done():
 					return
 				}
@@ -277,13 +276,20 @@ func (asnSweepTechnique) Run(ctx context.Context, target string, opts RunOptions
 	seen := map[netip.Addr]bool{}
 	var cands []Candidate
 	for r := range out {
-		if seen[r.ip] {
+		ip, err := netip.ParseAddr(r.candidate.IP)
+		if err != nil {
 			continue
 		}
-		seen[r.ip] = true
+		ip = ip.Unmap()
+		if seen[ip] {
+			continue
+		}
+		seen[ip] = true
+		r.candidate.Evidence = fmt.Sprintf("asn_sweep: AS%d prefix sweep — %s", asn, r.candidate.Evidence)
 		cands = append(cands, Candidate{
-			IP:       r.ip.String(),
-			Evidence: fmt.Sprintf("asn_sweep: AS%d prefix sweep — %s", asn, r.evidence),
+			IP:       ip.String(),
+			Evidence: r.candidate.Evidence,
+			Metadata: r.candidate.Metadata,
 		})
 	}
 

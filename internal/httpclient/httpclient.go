@@ -14,7 +14,7 @@ import (
 // Version is the unearth release the User-Agent advertises. GoReleaser
 // injects the real tag at build time via ldflags; the default is the dev
 // sentinel used for local builds.
-var Version = "1.0.4"
+var Version = "1.0.5"
 
 // Options configures the shared client. The zero value is usable: it expands
 // to sensible defaults via New.
@@ -30,6 +30,10 @@ type Options struct {
 	// techniques keep this false; active techniques (Packet 5) flip it to
 	// connect to a server by IP whose certificate names a different host.
 	InsecureTLS bool
+	// TLSServerName overrides the SNI/server-name sent during TLS handshakes.
+	// It is used by host-header origin validation when dialing an IP literal
+	// that routes HTTPS by the protected hostname.
+	TLSServerName string
 }
 
 // New returns an *http.Client tuned for recon use.
@@ -59,6 +63,7 @@ func New(opts Options) *http.Client {
 		TLSClientConfig: &tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: opts.InsecureTLS, // #nosec G402 — Packet 5 toggles this for IP-pinned probes
+			ServerName:         opts.TLSServerName,
 		},
 	}
 

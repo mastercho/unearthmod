@@ -109,7 +109,7 @@ func (s *tableSink) write(stdout, _ io.Writer, res *unearth.Result, _ *rootFlags
 		return err
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "  IP\tSCORE\tCORROB\tTECHNIQUES"); err != nil {
+	if _, err := fmt.Fprintln(tw, "  IP\tSCORE\tCORROB\tVALIDATION\tTECHNIQUES"); err != nil {
 		return err
 	}
 	limit := capN(s.top, len(res.Candidates))
@@ -122,8 +122,8 @@ func (s *tableSink) write(stdout, _ io.Writer, res *unearth.Result, _ *rootFlags
 		for i, h := range c.Techniques {
 			names[i] = h.Name
 		}
-		if _, err := fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\n",
-			c.IP, score, c.Corroboration, strings.Join(names, ",")); err != nil {
+		if _, err := fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\t%s\n",
+			c.IP, score, c.Corroboration, validationLabel(c.Validation), strings.Join(names, ",")); err != nil {
 			return err
 		}
 	}
@@ -184,6 +184,13 @@ func emitResultMeta(w io.Writer, res *unearth.Result) {
 		_, _ = fmt.Fprintf(w, "unearth: %s — run[%s] status=%q candidates=%d\n",
 			res.Target, r.Technique, r.Status, r.Candidates)
 	}
+	for _, c := range res.Candidates {
+		if c.Validation == nil {
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "unearth: %s — confirmed[%s] via %s score=%.3f\n",
+			res.Target, c.IP, c.Validation.Technique, c.Validation.Score)
+	}
 	for _, e := range res.Errors {
 		_, _ = fmt.Fprintf(w, "unearth: %s — err[%s] reason=%q: %s\n",
 			res.Target, e.Technique, e.Reason, e.Err)
@@ -191,4 +198,14 @@ func emitResultMeta(w io.Writer, res *unearth.Result) {
 	for _, ww := range res.Warnings {
 		_, _ = fmt.Fprintf(w, "unearth: %s — warn: %s\n", res.Target, ww)
 	}
+}
+
+func validationLabel(v *unearth.Validation) string {
+	if v == nil {
+		return "candidate"
+	}
+	if v.Score > 0 {
+		return fmt.Sprintf("%s %.2f", v.Status, v.Score)
+	}
+	return v.Status
 }

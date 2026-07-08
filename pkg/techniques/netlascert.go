@@ -42,6 +42,7 @@ const (
 	netlasCertField = "certificate.fingerprint_sha256"
 	netlasCertTTL   = 1 * time.Hour
 	netlasBodyLimit = 64 * 1024
+	netlasKeyHint   = "Netlas rejected the loaded NETLAS_API_KEY; check for a process env override, copied non-API token, hidden whitespace/newline, or regenerate the key from the Netlas profile page"
 )
 
 type netlasCertTechnique struct{}
@@ -124,7 +125,7 @@ func netlasSearchPage(ctx context.Context, opts RunOptions, fp string) (netlasSe
 	// 403 = key valid but plan/quota disallows; 429 = daily allowance hit.
 	// Both surface as ErrTierInsufficient (a clean skip, not a hard error).
 	if resp.StatusCode == http.StatusUnauthorized {
-		return doc, fmt.Errorf("netlas_cert: status 401: %w", ErrMissingAPIKey)
+		return doc, fmt.Errorf("netlas_cert: status 401: %s: %w", netlasKeyHint, ErrMissingAPIKey)
 	}
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
 		return doc, fmt.Errorf("netlas_cert: status %d: %w", resp.StatusCode, ErrTierInsufficient)
@@ -132,7 +133,7 @@ func netlasSearchPage(ctx context.Context, opts RunOptions, fp string) (netlasSe
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		body := providerErrorBody(resp.Body, netlasBodyLimit)
 		if isNetlasKeyError(body) {
-			return doc, fmt.Errorf("netlas_cert: status %d%s: %w", resp.StatusCode, body, ErrMissingAPIKey)
+			return doc, fmt.Errorf("netlas_cert: status %d%s: %s: %w", resp.StatusCode, body, netlasKeyHint, ErrMissingAPIKey)
 		}
 		if isNetlasTierError(body) {
 			return doc, fmt.Errorf("netlas_cert: status %d%s: %w", resp.StatusCode, body, ErrTierInsufficient)
@@ -151,7 +152,7 @@ func netlasSearchPage(ctx context.Context, opts RunOptions, fp string) (netlasSe
 			return doc, fmt.Errorf("netlas_cert: %s: %w", msg, ErrTierInsufficient)
 		}
 		if isNetlasKeyError(msg) {
-			return doc, fmt.Errorf("netlas_cert: %s: %w", msg, ErrMissingAPIKey)
+			return doc, fmt.Errorf("netlas_cert: %s: %s: %w", msg, netlasKeyHint, ErrMissingAPIKey)
 		}
 		return doc, errors.New("netlas_cert: " + msg)
 	}

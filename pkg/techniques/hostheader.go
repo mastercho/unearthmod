@@ -2,12 +2,14 @@ package techniques
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"crypto/x509"
 	"fmt"
 	"io"
+	"math"
+	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/unearth-tool/unearth/internal/httpclient"
 	"github.com/unearth-tool/unearth/pkg/cdn"
+	"golang.org/x/net/html"
 )
 
 func init() { Register(hostHeaderTechnique{}) }
@@ -38,20 +41,39 @@ func (hostHeaderTechnique) Tier() Tier               { return TierActive }
 func (hostHeaderTechnique) RequiresAPIKey() bool     { return false }
 func (hostHeaderTechnique) DefaultWeight() float64   { return 0.85 }
 func (hostHeaderTechnique) ConsumesCandidates() bool { return true }
+func (hostHeaderTechnique) TimeoutOverride() time.Duration {
+	return 2 * time.Minute
+}
 
 const (
-	hostHeaderWorkers       = 8
-	hostHeaderPerProbeLimit = 8 * 1024 // bytes read from each probe body
+	hostHeaderWorkers             = 8
+	hostHeaderPerProbeLimit       = 256 * 1024
+	hostHeaderMinBodyTextLen      = 80
+	hostHeaderConfirmThreshold    = 0.60
+	hostHeaderProbeTimeout        = 8 * time.Second
+	hostHeaderGenericErrorPenalty = 0.20
 )
 
-// newHostHeaderInsecureClient builds the dedicated TLS-skip client used
-// for direct-IP probes. Exposed as a package var so tests can inject a
-// stub client whose transport is the test's RoundTripper, sharing the
-// fixture set with the baseline call. Production code path is unchanged.
-var newHostHeaderInsecureClient = func() *http.Client {
+type hostHeaderEndpoint struct {
+	Scheme string
+	Port   int
+}
+
+var hostHeaderProbeEndpoints = []hostHeaderEndpoint{
+	{Scheme: "https", Port: 443},
+	{Scheme: "http", Port: 80},
+	{Scheme: "http", Port: 8080},
+	{Scheme: "https", Port: 8443},
+}
+
+// newHostHeaderInsecureClient builds the dedicated TLS-skip client used for
+// direct-IP probes. The TLS ServerName is pinned to the target so HTTPS origins
+// that route by SNI can be validated while connecting to an IP literal.
+var newHostHeaderInsecureClient = func(target string) *http.Client {
 	return httpclient.New(httpclient.Options{
-		Timeout:     10 * time.Second,
-		InsecureTLS: true,
+		Timeout:       hostHeaderProbeTimeout,
+		InsecureTLS:   true,
+		TLSServerName: canonicalTargetHost(target),
 	})
 }
 
@@ -60,24 +82,16 @@ func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptio
 		return nil, nil // nothing to validate
 	}
 
-	// Build a baseline of what the target's normal front door looks like:
-	// status, length, body hash, and the headers we'll filter out.
-	base, err := fetchBaseline(ctx, target, opts.HTTPClient)
+	targetHost := canonicalTargetHost(target)
+	base, err := fetchBaseline(ctx, targetHost, opts.HTTPClient)
 	if err != nil {
 		return nil, fmt.Errorf("host_header baseline: %w", err)
 	}
 
-	// Build a dedicated client that skips TLS verification, since
-	// connecting by IP will mismatch the certificate's name. This is the
-	// one place §5.1 explicitly permits a per-technique client — and it
-	// still goes through httpclient.New so timeouts and user-agent stay
-	// consistent with the rest of the tool.
-	insecure := newHostHeaderInsecureClient()
+	insecure := newHostHeaderInsecureClient(targetHost)
 
 	type result struct {
-		ip       netip.Addr
-		evidence string
-		ok       bool
+		candidate Candidate
 	}
 	in := make(chan netip.Addr)
 	out := make(chan result)
@@ -88,15 +102,16 @@ func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptio
 		go func() {
 			defer wg.Done()
 			for ip := range in {
-				if cdn.IsCDNIP(ip) {
+				ip = ip.Unmap()
+				if isInvalidHostHeaderSeed(ip) {
 					continue
 				}
-				evidence, matched := probeIPForHost(ctx, insecure, ip, target, base)
+				cand, matched := probeIPForHost(ctx, insecure, ip, targetHost, base)
 				if !matched {
 					continue
 				}
 				select {
-				case out <- result{ip: ip, evidence: evidence, ok: true}:
+				case out <- result{candidate: cand}:
 				case <-ctx.Done():
 					return
 				}
@@ -119,91 +134,425 @@ func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptio
 	seen := map[netip.Addr]bool{}
 	var cands []Candidate
 	for r := range out {
-		if seen[r.ip] {
+		ip, err := netip.ParseAddr(r.candidate.IP)
+		if err != nil {
 			continue
 		}
-		seen[r.ip] = true
-		cands = append(cands, Candidate{IP: r.ip.String(), Evidence: r.evidence})
+		ip = ip.Unmap()
+		if seen[ip] {
+			continue
+		}
+		seen[ip] = true
+		cands = append(cands, r.candidate)
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].IP < cands[j].IP })
 	return cands, nil
 }
 
-// baseline captures what the target's normal front door returns. We use
-// it as the "this looks like the site" reference for direct-IP probes.
 type baseline struct {
-	status   int
-	bodyHash string
-	bodyLen  int
+	URL     string
+	Status  int
+	Header  http.Header
+	Body    string
+	Text    string
+	Title   string
+	TLSCert *x509.Certificate
+}
+
+type hostHeaderProbe struct {
+	URL     string
+	Scheme  string
+	Port    int
+	Status  int
+	Header  http.Header
+	Body    string
+	Text    string
+	Title   string
+	TLSCert *x509.Certificate
+}
+
+type hostHeaderScore struct {
+	Overall float64
+	HTML    float64
+	Cert    float64
+	Headers float64
+	Title   bool
 }
 
 func fetchBaseline(ctx context.Context, target string, hc *http.Client) (baseline, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+target+"/", nil)
-	if err != nil {
-		return baseline{}, err
+	var firstErr error
+	for _, scheme := range []string{"https", "http"} {
+		u := scheme + "://" + target + "/"
+		p, err := fetchHostHeaderResponse(ctx, hc, u, "")
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		return baseline{
+			URL:     p.URL,
+			Status:  p.Status,
+			Header:  p.Header,
+			Body:    p.Body,
+			Text:    p.Text,
+			Title:   p.Title,
+			TLSCert: p.TLSCert,
+		}, nil
 	}
+	return baseline{}, firstErr
+}
+
+func probeIPForHost(ctx context.Context, hc *http.Client, ip netip.Addr, target string, base baseline) (Candidate, bool) {
+	var best Candidate
+	var bestScore float64
+	for _, ep := range hostHeaderProbeEndpoints {
+		p, err := fetchHostHeaderResponse(ctx, hc, hostHeaderProbeURL(ip, ep), target)
+		if err != nil {
+			continue
+		}
+		if hasCDNHeaders(p.Header) || isGenericHostHeaderMatch(base.Status, p.Status, base.Text, p.Text) {
+			continue
+		}
+		score := scoreHostHeaderProbe(base, p)
+		if score.Overall < hostHeaderConfirmThreshold || score.Overall <= bestScore {
+			continue
+		}
+		bestScore = score.Overall
+		best = Candidate{
+			IP:       ip.String(),
+			Evidence: hostHeaderEvidence(ip, target, p, score),
+			Metadata: map[string]any{
+				"validation": map[string]any{
+					"status":       "confirmed",
+					"technique":    "host_header",
+					"method":       "host_header",
+					"url":          p.URL,
+					"scheme":       p.Scheme,
+					"port":         p.Port,
+					"score":        roundScore(score.Overall),
+					"html_score":   roundScore(score.HTML),
+					"cert_score":   roundScore(score.Cert),
+					"header_score": roundScore(score.Headers),
+					"title_match":  score.Title,
+					"threshold":    hostHeaderConfirmThreshold,
+				},
+			},
+		}
+	}
+	return best, best.IP != ""
+}
+
+func fetchHostHeaderResponse(ctx context.Context, hc *http.Client, u, host string) (hostHeaderProbe, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return hostHeaderProbe{}, err
+	}
+	if host != "" {
+		req.Host = host
+	}
+	setHostHeaderBrowserHeaders(req)
 	resp, err := hc.Do(req)
 	if err != nil {
-		return baseline{}, err
+		return hostHeaderProbe{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, hostHeaderPerProbeLimit))
-	sum := sha256.Sum256(body)
-	return baseline{
-		status:   resp.StatusCode,
-		bodyHash: hex.EncodeToString(sum[:]),
-		bodyLen:  len(body),
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, hostHeaderPerProbeLimit))
+	if err != nil {
+		return hostHeaderProbe{}, err
+	}
+	text, title := normalizeHostHeaderHTML(string(body))
+	probeURL := req.URL
+	if resp.Request != nil && resp.Request.URL != nil {
+		probeURL = resp.Request.URL
+	}
+	port := probeURL.Port()
+	if port == "" {
+		if probeURL.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
+	var cert *x509.Certificate
+	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+		cert = resp.TLS.PeerCertificates[0]
+	}
+	return hostHeaderProbe{
+		URL:     probeURL.String(),
+		Scheme:  probeURL.Scheme,
+		Port:    atoiDefault(port, 0),
+		Status:  resp.StatusCode,
+		Header:  resp.Header.Clone(),
+		Body:    string(body),
+		Text:    text,
+		Title:   title,
+		TLSCert: cert,
 	}, nil
 }
 
-// probeIPForHost performs the actual direct-IP request and decides
-// whether the response confirms ip is serving target's site.
-func probeIPForHost(ctx context.Context, hc *http.Client, ip netip.Addr, target string, base baseline) (string, bool) {
-	host := ip.String()
-	if ip.Is6() {
-		host = "[" + host + "]"
+func scoreHostHeaderProbe(base baseline, p hostHeaderProbe) hostHeaderScore {
+	htmlScore := textSimilarity(base.Text, p.Text)
+	titleMatch := base.Title != "" && strings.EqualFold(base.Title, p.Title)
+	if titleMatch && htmlScore < 0.75 {
+		htmlScore = 0.75
 	}
-	url := "https://" + host + "/"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", false
+	certScore := certSimilarity(base.TLSCert, p.TLSCert)
+	headerScore := compareHostHeaderHeaders(base.Header, p.Header)
+	overall := 0.60*htmlScore + 0.25*certScore + 0.15*headerScore + statusAdjustment(base.Status, p.Status)
+	if overall < 0 {
+		overall = 0
 	}
-	req.Host = target
-	resp, err := hc.Do(req)
-	if err != nil {
-		return "", false
+	if overall > 1 {
+		overall = 1
 	}
-	defer func() { _ = resp.Body.Close() }()
+	return hostHeaderScore{
+		Overall: overall,
+		HTML:    htmlScore,
+		Cert:    certScore,
+		Headers: headerScore,
+		Title:   titleMatch,
+	}
+}
 
-	// Reject if response carries CDN markers — that means we hit the CDN,
-	// not the origin.
-	if hasCDNHeaders(resp.Header) {
-		return "", false
-	}
+func hostHeaderEvidence(ip netip.Addr, target string, p hostHeaderProbe, score hostHeaderScore) string {
+	return fmt.Sprintf("host_header: %s confirmed %s via %s:%d status=%d score=%.2f html=%.2f cert=%.2f headers=%.2f",
+		ip, target, p.Scheme, p.Port, p.Status, score.Overall, score.HTML, score.Cert, score.Headers)
+}
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, hostHeaderPerProbeLimit))
-	sum := sha256.Sum256(body)
-	bodyHash := hex.EncodeToString(sum[:])
+func hostHeaderProbeURL(ip netip.Addr, ep hostHeaderEndpoint) string {
+	return fmt.Sprintf("%s://%s/", ep.Scheme, net.JoinHostPort(ip.String(), fmt.Sprintf("%d", ep.Port)))
+}
 
-	// Strong match: same status, same body. Likely the real origin.
-	if resp.StatusCode == base.status && bodyHash == base.bodyHash {
-		return fmt.Sprintf("host_header: %s served %s with status %d and matching body hash (no CDN headers)",
-			ip, target, resp.StatusCode), true
+func canonicalTargetHost(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return target
 	}
-	// Looser match: same status and body length within 5% of baseline,
-	// when baseline is non-trivial. Origins commonly insert/strip a
-	// small marker but otherwise serve identical content.
-	if resp.StatusCode == base.status && base.bodyLen > 256 {
-		diff := base.bodyLen - len(body)
-		if diff < 0 {
-			diff = -diff
-		}
-		if diff*20 < base.bodyLen {
-			return fmt.Sprintf("host_header: %s served %s with status %d and body length within 5%% of baseline",
-				ip, target, resp.StatusCode), true
+	if strings.Contains(target, "://") {
+		if u, err := url.Parse(target); err == nil && u.Host != "" {
+			target = u.Host
 		}
 	}
-	return "", false
+	if h, _, err := net.SplitHostPort(target); err == nil {
+		return h
+	}
+	return strings.Trim(target, "[]")
+}
+
+func isInvalidHostHeaderSeed(ip netip.Addr) bool {
+	return !ip.IsValid() ||
+		ip.IsLoopback() ||
+		ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() ||
+		ip.IsMulticast() ||
+		ip.IsPrivate() ||
+		ip.IsUnspecified() ||
+		cdn.IsCDNIP(ip)
+}
+
+func setHostHeaderBrowserHeaders(req *http.Request) {
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+}
+
+func normalizeHostHeaderHTML(raw string) (text string, title string) {
+	doc, err := html.Parse(strings.NewReader(raw))
+	if err != nil {
+		return normalizeWhitespace(stripHTMLTags(raw)), ""
+	}
+	var parts []string
+	var walk func(*html.Node, bool)
+	walk = func(n *html.Node, skip bool) {
+		if n.Type == html.ElementNode {
+			name := strings.ToLower(n.Data)
+			if name == "script" || name == "style" || name == "noscript" || name == "svg" {
+				skip = true
+			}
+			if name == "title" {
+				title = normalizeWhitespace(nodeText(n))
+			}
+		}
+		if !skip && n.Type == html.TextNode {
+			if s := normalizeWhitespace(n.Data); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c, skip)
+		}
+	}
+	walk(doc, false)
+	return normalizeWhitespace(strings.Join(parts, " ")), title
+}
+
+func nodeText(n *html.Node) string {
+	var b strings.Builder
+	var walk func(*html.Node)
+	walk = func(cur *html.Node) {
+		if cur.Type == html.TextNode {
+			b.WriteString(cur.Data)
+			b.WriteByte(' ')
+		}
+		for c := cur.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return b.String()
+}
+
+func stripHTMLTags(raw string) string {
+	var b strings.Builder
+	inTag := false
+	for _, r := range raw {
+		switch r {
+		case '<':
+			inTag = true
+		case '>':
+			inTag = false
+		default:
+			if !inTag {
+				b.WriteRune(r)
+			}
+		}
+	}
+	return b.String()
+}
+
+func normalizeWhitespace(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+}
+
+func textSimilarity(a, b string) float64 {
+	if a == b && a != "" {
+		return 1
+	}
+	ta := strings.Fields(a)
+	tb := strings.Fields(b)
+	if len(ta) == 0 || len(tb) == 0 {
+		return 0
+	}
+	counts := map[string]int{}
+	for _, t := range ta {
+		counts[t]++
+	}
+	common := 0
+	for _, t := range tb {
+		if counts[t] > 0 {
+			common++
+			counts[t]--
+		}
+	}
+	return float64(2*common) / float64(len(ta)+len(tb))
+}
+
+func certSimilarity(a, b *x509.Certificate) float64 {
+	if a == nil || b == nil {
+		return 0
+	}
+	score := 0.0
+	if a.SerialNumber != nil && b.SerialNumber != nil && a.SerialNumber.Cmp(b.SerialNumber) == 0 {
+		score += 0.50
+	}
+	if a.Subject.CommonName != "" && strings.EqualFold(a.Subject.CommonName, b.Subject.CommonName) {
+		score += 0.25
+	}
+	refSANs := map[string]bool{}
+	for _, san := range a.DNSNames {
+		refSANs[strings.ToLower(san)] = true
+	}
+	if len(refSANs) > 0 {
+		overlap := 0
+		for _, san := range b.DNSNames {
+			if refSANs[strings.ToLower(san)] {
+				overlap++
+			}
+		}
+		if overlap > 0 {
+			score += 0.25 * float64(overlap) / float64(len(refSANs))
+		}
+	}
+	return score
+}
+
+func compareHostHeaderHeaders(a, b http.Header) float64 {
+	total := 0
+	matches := 0
+	for _, h := range []string{"Server", "X-Powered-By"} {
+		av, bv := a.Get(h), b.Get(h)
+		if av == "" && bv == "" {
+			continue
+		}
+		total++
+		if strings.EqualFold(av, bv) {
+			matches++
+		}
+	}
+	ac, bc := cookieNames(a.Values("Set-Cookie")), cookieNames(b.Values("Set-Cookie"))
+	if len(ac) > 0 || len(bc) > 0 {
+		total++
+		for name := range ac {
+			if bc[name] {
+				matches++
+				break
+			}
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(matches) / float64(total)
+}
+
+func cookieNames(raw []string) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range raw {
+		name, _, _ := strings.Cut(c, "=")
+		name = strings.TrimSpace(strings.ToLower(name))
+		if name != "" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+func statusAdjustment(a, b int) float64 {
+	if a == b {
+		if a >= 400 {
+			return -hostHeaderGenericErrorPenalty
+		}
+		return 0.05
+	}
+	aOK := a >= 200 && a < 400
+	bOK := b >= 200 && b < 400
+	if aOK != bOK {
+		return -0.20
+	}
+	return 0
+}
+
+func isGenericHostHeaderMatch(baseStatus, probeStatus int, baseText, probeText string) bool {
+	if baseStatus >= 400 && probeStatus >= 400 {
+		return true
+	}
+	return len(baseText) < hostHeaderMinBodyTextLen || len(probeText) < hostHeaderMinBodyTextLen
+}
+
+func roundScore(v float64) float64 {
+	return math.Round(v*1000) / 1000
+}
+
+func atoiDefault(s string, fallback int) int {
+	var n int
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		return fallback
+	}
+	return n
 }
 
 func hasCDNHeaders(h http.Header) bool {
@@ -217,5 +566,8 @@ func hasCDNHeaders(h http.Header) bool {
 	}
 	via := strings.ToLower(h.Get("Via"))
 	xc := strings.ToLower(h.Get("X-Cache"))
-	return strings.Contains(via, "cloudfront") || strings.Contains(xc, "cloudfront")
+	return strings.Contains(via, "cloudfront") ||
+		strings.Contains(via, "cloudflare") ||
+		strings.Contains(xc, "cloudfront") ||
+		strings.Contains(xc, "cloudflare")
 }
