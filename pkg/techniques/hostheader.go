@@ -59,6 +59,11 @@ type hostHeaderEndpoint struct {
 	Port   int
 }
 
+type hostHeaderProbeMode struct {
+	Method string
+	Host   string
+}
+
 var hostHeaderProbeEndpoints = []hostHeaderEndpoint{
 	{Scheme: "https", Port: 443},
 	{Scheme: "http", Port: 80},
@@ -207,37 +212,45 @@ func probeIPForHost(ctx context.Context, hc *http.Client, ip netip.Addr, target 
 	var best Candidate
 	var bestScore float64
 	for _, ep := range hostHeaderProbeEndpoints {
-		p, err := fetchHostHeaderResponse(ctx, hc, hostHeaderProbeURL(ip, ep), target)
-		if err != nil {
-			continue
-		}
-		if hasCDNHeaders(p.Header) || isGenericHostHeaderMatch(base.Status, p.Status, base.Text, p.Text) {
-			continue
-		}
-		score := scoreHostHeaderProbe(base, p)
-		if score.Overall < hostHeaderConfirmThreshold || score.Overall <= bestScore {
-			continue
-		}
-		bestScore = score.Overall
-		best = Candidate{
-			IP:       ip.String(),
-			Evidence: hostHeaderEvidence(ip, target, p, score),
-			Metadata: map[string]any{
-				"validation": map[string]any{
-					"status":       "confirmed",
-					"technique":    "host_header",
-					"method":       "host_header",
-					"url":          p.URL,
-					"scheme":       p.Scheme,
-					"port":         p.Port,
-					"score":        roundScore(score.Overall),
-					"html_score":   roundScore(score.HTML),
-					"cert_score":   roundScore(score.Cert),
-					"header_score": roundScore(score.Headers),
-					"title_match":  score.Title,
-					"threshold":    hostHeaderConfirmThreshold,
+		for _, mode := range []hostHeaderProbeMode{
+			{Method: "direct"},
+			{Method: "host_header", Host: target},
+		} {
+			p, err := fetchHostHeaderResponse(ctx, hc, hostHeaderProbeURL(ip, ep), mode.Host)
+			if err != nil {
+				continue
+			}
+			if hasCDNHeaders(p.Header) || isGenericHostHeaderMatch(base.Status, p.Status) {
+				continue
+			}
+			score := scoreHostHeaderProbe(base, p)
+			if isWeakShortHostHeaderMatch(base, p, score) {
+				continue
+			}
+			if score.Overall < hostHeaderConfirmThreshold || score.Overall <= bestScore {
+				continue
+			}
+			bestScore = score.Overall
+			best = Candidate{
+				IP:       ip.String(),
+				Evidence: hostHeaderEvidence(ip, target, mode.Method, p, score),
+				Metadata: map[string]any{
+					"validation": map[string]any{
+						"status":       "confirmed",
+						"technique":    "host_header",
+						"method":       mode.Method,
+						"url":          p.URL,
+						"scheme":       p.Scheme,
+						"port":         p.Port,
+						"score":        roundScore(score.Overall),
+						"html_score":   roundScore(score.HTML),
+						"cert_score":   roundScore(score.Cert),
+						"header_score": roundScore(score.Headers),
+						"title_match":  score.Title,
+						"threshold":    hostHeaderConfirmThreshold,
+					},
 				},
-			},
+			}
 		}
 	}
 	return best, best.IP != ""
@@ -316,9 +329,9 @@ func scoreHostHeaderProbe(base baseline, p hostHeaderProbe) hostHeaderScore {
 	}
 }
 
-func hostHeaderEvidence(ip netip.Addr, target string, p hostHeaderProbe, score hostHeaderScore) string {
-	return fmt.Sprintf("host_header: %s confirmed %s via %s:%d status=%d score=%.2f html=%.2f cert=%.2f headers=%.2f",
-		ip, target, p.Scheme, p.Port, p.Status, score.Overall, score.HTML, score.Cert, score.Headers)
+func hostHeaderEvidence(ip netip.Addr, target, method string, p hostHeaderProbe, score hostHeaderScore) string {
+	return fmt.Sprintf("host_header: %s confirmed %s via %s %s:%d status=%d score=%.2f html=%.2f cert=%.2f headers=%.2f",
+		ip, target, method, p.Scheme, p.Port, p.Status, score.Overall, score.HTML, score.Cert, score.Headers)
 }
 
 func hostHeaderProbeURL(ip netip.Addr, ep hostHeaderEndpoint) string {
@@ -353,10 +366,18 @@ func isInvalidHostHeaderSeed(ip netip.Addr) bool {
 }
 
 func setHostHeaderBrowserHeaders(req *http.Request) {
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Sec-Fetch-Dest", "document")
+	req.Header.Set("Sec-Fetch-Mode", "navigate")
+	req.Header.Set("Sec-Fetch-Site", "none")
+	req.Header.Set("Sec-Fetch-User", "?1")
+	req.Header.Set("Sec-Ch-Ua", `"Chromium";v="131", "Not_A Brand";v="24"`)
+	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
+	req.Header.Set("Sec-Ch-Ua-Platform", `"Windows"`)
 	req.Header.Set("Upgrade-Insecure-Requests", "1")
 }
 
@@ -536,11 +557,20 @@ func statusAdjustment(a, b int) float64 {
 	return 0
 }
 
-func isGenericHostHeaderMatch(baseStatus, probeStatus int, baseText, probeText string) bool {
+func isGenericHostHeaderMatch(baseStatus, probeStatus int) bool {
 	if baseStatus >= 400 && probeStatus >= 400 {
 		return true
 	}
-	return len(baseText) < hostHeaderMinBodyTextLen || len(probeText) < hostHeaderMinBodyTextLen
+	return false
+}
+
+func isWeakShortHostHeaderMatch(base baseline, p hostHeaderProbe, score hostHeaderScore) bool {
+	if len(base.Text) >= hostHeaderMinBodyTextLen && len(p.Text) >= hostHeaderMinBodyTextLen {
+		return false
+	}
+	// Very short pages can match by accident. Keep them only when a stronger
+	// identity signal explains the match, such as a shared TLS cert or title.
+	return score.Cert < 0.50 && !score.Title
 }
 
 func roundScore(v float64) float64 {

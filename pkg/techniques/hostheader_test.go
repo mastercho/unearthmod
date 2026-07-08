@@ -83,7 +83,7 @@ func TestHostHeader_ConfirmsMatchingOrigin(t *testing.T) {
 		byURL: map[string]func(*http.Request) (*http.Response, error){
 			"https://203.0.113.50:443/": func(req *http.Request) (*http.Response, error) {
 				if req.Host != "example.test" {
-					t.Errorf("Host header: got %q want example.test", req.Host)
+					return stubResponse(200, "direct ip placeholder"), nil
 				}
 				return stubResponse(200, body), nil
 			},
@@ -116,6 +116,46 @@ func TestHostHeader_ConfirmsMatchingOrigin(t *testing.T) {
 	}
 	if got := v["score"].(float64); got < hostHeaderConfirmThreshold {
 		t.Fatalf("validation score = %v, want >= %.2f", got, hostHeaderConfirmThreshold)
+	}
+	if v["method"] != "host_header" {
+		t.Fatalf("validation method = %v, want host_header", v["method"])
+	}
+}
+
+func TestHostHeader_ConfirmsDirectIPOrigin(t *testing.T) {
+	body := "<html><body>" + strings.Repeat("direct origin content ", 40) + "</body></html>"
+	rt := &hostHeaderStubRT{
+		baselineBody: body,
+		byURL: map[string]func(*http.Request) (*http.Response, error){
+			"https://203.0.113.52:443/": func(req *http.Request) (*http.Response, error) {
+				if req.Host == "example.test" {
+					return stubResponse(200, "host-header placeholder"), nil
+				}
+				if req.Host != "" && req.Host != req.URL.Host {
+					t.Errorf("direct probe Host: got %q want URL host %q", req.Host, req.URL.Host)
+				}
+				return stubResponse(200, body), nil
+			},
+		},
+	}
+	hc := &http.Client{Transport: rt}
+	withHostHeaderClient(t, hc)
+	out, err := hostHeaderTechnique{}.Run(context.Background(), "example.test", RunOptions{
+		HTTPClient: hc,
+		SeedIPs:    []netip.Addr{netip.MustParseAddr("203.0.113.52")},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(out) != 1 || out[0].IP != "203.0.113.52" {
+		t.Fatalf("expected direct-IP confirmation, got %+v", out)
+	}
+	v, ok := out[0].Metadata["validation"].(map[string]any)
+	if !ok {
+		t.Fatalf("validation metadata missing: %+v", out[0].Metadata)
+	}
+	if v["method"] != "direct" {
+		t.Fatalf("validation method = %v, want direct", v["method"])
 	}
 }
 
@@ -175,7 +215,7 @@ func TestHostHeader_HTTPFallbackAndTitleSignal(t *testing.T) {
 			},
 			"http://203.0.113.70:80/": func(req *http.Request) (*http.Response, error) {
 				if req.Host != "example.test" {
-					t.Errorf("Host header: got %q", req.Host)
+					return stubResponse(200, "direct ip fallback"), nil
 				}
 				resp := stubResponse(200, `<html><head><title>Printer Inks</title></head><body>`+strings.Repeat("different but same site shell ", 12)+`</body></html>`)
 				resp.Header.Set("Server", "origin")
@@ -192,8 +232,37 @@ func TestHostHeader_HTTPFallbackAndTitleSignal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(out) != 1 || !strings.Contains(out[0].Evidence, "via http:80") {
+	if len(out) != 1 || !strings.Contains(out[0].Evidence, "host_header http:80") {
 		t.Fatalf("want HTTP title/header confirmation, got %+v", out)
+	}
+}
+
+func TestHostHeader_AllowsShortBodyWithStrongCertSignal(t *testing.T) {
+	cert := &x509.Certificate{
+		SerialNumber: bigInt(9),
+		Subject:      pkix.Name{CommonName: "example.test"},
+		DNSNames:     []string{"example.test"},
+	}
+	base := baseline{Status: 200, Text: "ok", TLSCert: cert}
+	probe := hostHeaderProbe{Status: 200, Text: "ok", TLSCert: cert}
+	score := scoreHostHeaderProbe(base, probe)
+	if score.Overall < hostHeaderConfirmThreshold {
+		t.Fatalf("test setup score = %+v, want confirmable", score)
+	}
+	if isWeakShortHostHeaderMatch(base, probe, score) {
+		t.Fatalf("short cert-backed match should not be rejected: %+v", score)
+	}
+}
+
+func TestHostHeader_RejectsShortBodyWithoutStrongSignal(t *testing.T) {
+	base := baseline{Status: 200, Text: "ok"}
+	probe := hostHeaderProbe{Status: 200, Text: "ok"}
+	score := scoreHostHeaderProbe(base, probe)
+	if score.Overall < hostHeaderConfirmThreshold {
+		t.Fatalf("test setup score = %+v, want score that old guard would have accepted", score)
+	}
+	if !isWeakShortHostHeaderMatch(base, probe, score) {
+		t.Fatalf("short body without cert/title signal should be rejected: %+v", score)
 	}
 }
 

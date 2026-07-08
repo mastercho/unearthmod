@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.8] — 2026-07-08
+
+### Changed
+
+- Strengthened active origin confirmation by probing each candidate with both direct-IP access and `Host: target`, matching the verifier flow used by tools like `unwaf`.
+- Added more browser-like request headers for active origin probes.
+
+### Fixed
+
+- Stopped discarding short origin responses before scoring when stronger identity signals such as TLS certificate overlap or title match can still confirm the IP.
+
 ## [1.0.7] — 2026-07-08
 
 ### Added
@@ -177,3 +188,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [1.0.5]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.5
 [1.0.6]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.6
 [1.0.7]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.7
+[1.0.8]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.8
