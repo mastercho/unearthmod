@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/unearth-tool/unearth/internal/httpclient"
 	"github.com/unearth-tool/unearth/pkg/cdn"
 	"golang.org/x/net/html"
 )
@@ -71,15 +70,22 @@ var hostHeaderProbeEndpoints = []hostHeaderEndpoint{
 	{Scheme: "https", Port: 8443},
 }
 
+var newHostHeaderBaselineClient = func() *http.Client {
+	return newHostHeaderBrowserClient(hostHeaderProbeTimeout, "")
+}
+
+// newHostHeaderDirectClient builds the TLS-skip client for true direct-IP
+// probes. It intentionally does not pin TLS ServerName to the target; this
+// matches browser/direct-IP verification used by tools like unwaf.
+var newHostHeaderDirectClient = func() *http.Client {
+	return newHostHeaderBrowserClient(hostHeaderProbeTimeout, "")
+}
+
 // newHostHeaderInsecureClient builds the dedicated TLS-skip client used for
-// direct-IP probes. The TLS ServerName is pinned to the target so HTTPS origins
+// host-header probes. The TLS ServerName is pinned to the target so HTTPS origins
 // that route by SNI can be validated while connecting to an IP literal.
 var newHostHeaderInsecureClient = func(target string) *http.Client {
-	return httpclient.New(httpclient.Options{
-		Timeout:       hostHeaderProbeTimeout,
-		InsecureTLS:   true,
-		TLSServerName: canonicalTargetHost(target),
-	})
+	return newHostHeaderBrowserClient(hostHeaderProbeTimeout, canonicalTargetHost(target))
 }
 
 func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptions) ([]Candidate, error) {
@@ -88,11 +94,12 @@ func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptio
 	}
 
 	targetHost := canonicalTargetHost(target)
-	base, err := fetchBaseline(ctx, targetHost, opts.HTTPClient)
+	base, err := fetchBaseline(ctx, targetHost, newHostHeaderBaselineClient())
 	if err != nil {
 		return nil, fmt.Errorf("host_header baseline: %w", err)
 	}
 
+	direct := newHostHeaderDirectClient()
 	insecure := newHostHeaderInsecureClient(targetHost)
 
 	type result struct {
@@ -111,7 +118,7 @@ func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptio
 				if isInvalidHostHeaderSeed(ip) {
 					continue
 				}
-				cand, matched := probeIPForHost(ctx, insecure, ip, targetHost, base)
+				cand, matched := probeIPForHost(ctx, direct, insecure, ip, targetHost, base)
 				if !matched {
 					continue
 				}
@@ -208,7 +215,7 @@ func fetchBaseline(ctx context.Context, target string, hc *http.Client) (baselin
 	return baseline{}, firstErr
 }
 
-func probeIPForHost(ctx context.Context, hc *http.Client, ip netip.Addr, target string, base baseline) (Candidate, bool) {
+func probeIPForHost(ctx context.Context, directClient, hostClient *http.Client, ip netip.Addr, target string, base baseline) (Candidate, bool) {
 	var best Candidate
 	var bestScore float64
 	for _, ep := range hostHeaderProbeEndpoints {
@@ -216,6 +223,10 @@ func probeIPForHost(ctx context.Context, hc *http.Client, ip netip.Addr, target 
 			{Method: "direct"},
 			{Method: "host_header", Host: target},
 		} {
+			hc := directClient
+			if mode.Host != "" {
+				hc = hostClient
+			}
 			p, err := fetchHostHeaderResponse(ctx, hc, hostHeaderProbeURL(ip, ep), mode.Host)
 			if err != nil {
 				continue

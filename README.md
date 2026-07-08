@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/bugsyhewitt/unearth/actions/workflows/ci.yml/badge.svg)](https://github.com/bugsyhewitt/unearth/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/bugsyhewitt/unearth)](https://github.com/bugsyhewitt/unearth/releases/latest)
-[![Go version](https://img.shields.io/badge/go-1.23+-00ADD8)](https://go.dev)
+[![Go version](https://img.shields.io/badge/go-1.24+-00ADD8)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **Unearth the real origin server hiding behind a CDN.**
@@ -59,7 +59,7 @@ The default (`passive`) never touches the target. `--active` and `--aggressive` 
 
 **Ranking:** each technique declares a reliability weight. When two or more techniques surface the same IP independently, their weights combine with a [noisy-OR](docs/ranking.md) rule — independent corroboration raises confidence without one weak signal dominating. The `corroboration` field counts how many techniques agreed; `single_source: true` flags lone hits. See [docs/ranking.md](docs/ranking.md).
 
-**Candidates vs confirmed origins:** passive and API-backed techniques produce origin candidates. Active validation can upgrade a candidate to a confirmed result: `host_header` fetches the current front-door page, probes candidate IPs over HTTP/HTTPS using both direct-IP access and `Host: target` with target SNI, normalizes page text/title, compares HTML similarity, TLS certificate overlap, headers, and status, then marks the candidate with a `validation` block when the combined score is at least 60%. In table output those rows show `confirmed <score>`; JSON/JSONL includes the full component scores and the winning validation method.
+**Candidates vs confirmed origins:** passive and API-backed techniques produce origin candidates. Active validation can upgrade a candidate to a confirmed result: `host_header` fetches the current front-door page with a Chrome-like uTLS/HTTP2 client, probes candidate IPs over HTTP/HTTPS using both direct-IP access and `Host: target` with target SNI, normalizes page text/title, compares HTML similarity, TLS certificate overlap, headers, and status, then marks the candidate with a `validation` block when the combined score is at least 60%. In table output those rows show `confirmed <score>`; JSON/JSONL includes the full component scores and the winning validation method.
 
 ---
 
@@ -75,7 +75,7 @@ The default (`passive`) never touches the target. `--active` and `--aggressive` 
 | `censys_cert` | Passive | Yes — `CENSYS_PLATFORM_PAT` | 0.90 | Censys Platform certificate-fingerprint search |
 | `censys_ipv6` | Passive | Yes — `CENSYS_PLATFORM_PAT` | 0.78 | Censys Platform IPv6 asset-discovery — pivots on the target apex via `host.dns.names` and emits only non-CDN IPv6 hits, catching dual-stack AAAA-leak origins that never reused the front-door certificate and so escape `censys_cert` |
 | `dns_history` | Passive | Yes — `SECURITYTRAILS_API_KEY` or `VIEWDNS_API_KEY` | 0.65 | Historical DNS A/AAAA records |
-| `host_header` | Active | No | 0.85 | HTTP origin confirmation: probes candidate IPs on HTTP/HTTPS using direct-IP access and `Host: target` with target SNI, then confirms matches using HTML/text similarity, TLS certificate overlap, headers, and status scoring |
+| `host_header` | Active | No | 0.85 | HTTP origin confirmation: fetches the baseline with a Chrome-like uTLS/HTTP2 client, probes candidate IPs on HTTP/HTTPS using direct-IP access and `Host: target` with target SNI, then confirms matches using HTML/text similarity, TLS certificate overlap, headers, and status scoring |
 | `banner_grab` | Active | No | 0.45 | SSH and HTTP banner fingerprinting of candidate IPs |
 | `shodan_cert` | Active | Yes — `SHODAN_API_KEY` | 0.85 | Shodan certificate-fingerprint search |
 | `shodan_cve` | Passive | Yes — `SHODAN_API_KEY` + operator-supplied `--cve` | 0.78 | Shodan CVE-scoped host search — given a CVE id (e.g. `CVE-2024-1709`) and the target apex, asks Shodan for every host indexed under `hostname:<target>` that is known by Shodan's vulnerability scanner to be affected by that CVE, and emits the non-CDN hits; orthogonal to `shodan_cert` (a patched CDN-fronted edge does not match, an unpatched forgotten origin or staging host under the same apex does), purpose-built for disclosure-window recon |

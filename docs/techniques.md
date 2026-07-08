@@ -331,7 +331,7 @@ Active techniques make direct TCP/HTTP connections to *candidate IPs*, not to th
 
 **Tier:** Active | **Weight:** 0.85 | **API key:** None
 
-**What it does:** For each candidate IP (from phase-1 techniques), probes common web ports over HTTP/HTTPS using both direct-IP access and `Host: target` with target SNI. A response that mirrors the target's content, has compatible TLS/header signals, and lacks CDN-identifying headers is strong evidence that the IP is the real origin.
+**What it does:** Fetches the target baseline with a Chrome-like uTLS/HTTP2 client, then probes each candidate IP (from phase-1 techniques) over common web ports using both direct-IP access and `Host: target` with target SNI. A response that mirrors the target's content, has compatible TLS/header signals, and lacks CDN-identifying headers is strong evidence that the IP is the real origin.
 
 **Phase-2 consumer:** This is a phase-2 technique — it receives the pool of candidate IPs from phase-1 producers, not from the network. An empty phase-1 result means it has nothing to probe.
 

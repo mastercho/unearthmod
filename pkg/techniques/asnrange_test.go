@@ -26,9 +26,17 @@ func withStubASNFetch(t *testing.T, asnFn func(context.Context, netip.Addr, *htt
 // route through the test's RoundTripper instead of real network connections.
 func withStubASNProbeClient(t *testing.T, hc *http.Client) {
 	t.Helper()
-	prev := newHostHeaderInsecureClient
+	prevBaseline := newHostHeaderBaselineClient
+	prevDirect := newHostHeaderDirectClient
+	prevHost := newHostHeaderInsecureClient
+	newHostHeaderBaselineClient = func() *http.Client { return hc }
+	newHostHeaderDirectClient = func() *http.Client { return hc }
 	newHostHeaderInsecureClient = func(string) *http.Client { return hc }
-	t.Cleanup(func() { newHostHeaderInsecureClient = prev })
+	t.Cleanup(func() {
+		newHostHeaderBaselineClient = prevBaseline
+		newHostHeaderDirectClient = prevDirect
+		newHostHeaderInsecureClient = prevHost
+	})
 }
 
 func TestAsnSweep_Metadata(t *testing.T) {

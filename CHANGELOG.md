@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.10] — 2026-07-08
+
+### Changed
+
+- Switched active origin verification baseline and candidate probes to a Chrome-like uTLS transport with HTTP/2-first fallback, matching `unwaf` more closely and avoiding Cloudflare bot/error baselines from Go's default TLS fingerprint.
+
+## [1.0.9] — 2026-07-08
+
+### Fixed
+
+- Made `host_header` direct-IP verification truly direct by using a separate TLS client without target SNI, while keeping target-SNI behavior for `Host: target` probes.
+- Applied the same direct-vs-host verifier split to `asn_sweep`, which reuses the active origin validator.
+
 ## [1.0.8] — 2026-07-08
 
 ### Changed
@@ -189,3 +202,5 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [1.0.6]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.6
 [1.0.7]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.7
 [1.0.8]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.8
+[1.0.9]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.9
+[1.0.10]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.10

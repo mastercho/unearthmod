@@ -207,12 +207,13 @@ func (asnSweepTechnique) Run(ctx context.Context, target string, opts RunOptions
 
 	targetHost := canonicalTargetHost(target)
 	// Fetch the baseline of what the target's front door looks like.
-	base, err := fetchBaseline(ctx, targetHost, hc)
+	base, err := fetchBaseline(ctx, targetHost, newHostHeaderBaselineClient())
 	if err != nil {
 		return nil, fmt.Errorf("asn_sweep baseline: %w", err)
 	}
 
-	// Build a dedicated TLS-skip client for direct-IP probes.
+	// Build dedicated TLS-skip clients for direct-IP and host-header probes.
+	direct := newHostHeaderDirectClient()
 	insecure := newHostHeaderInsecureClient(targetHost)
 
 	// Step 4: probe IPs in the parsed prefixes.
@@ -237,7 +238,7 @@ func (asnSweepTechnique) Run(ctx context.Context, target string, opts RunOptions
 				if isReservedAddr(ip) {
 					continue
 				}
-				cand, matched := probeIPForHost(ctx, insecure, ip, targetHost, base)
+				cand, matched := probeIPForHost(ctx, direct, insecure, ip, targetHost, base)
 				if !matched {
 					continue
 				}

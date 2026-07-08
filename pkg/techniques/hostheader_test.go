@@ -64,9 +64,17 @@ func (s *hostHeaderStubRT) RoundTrip(req *http.Request) (*http.Response, error) 
 // this, probes would attempt real network connections to the seed IPs.
 func withHostHeaderClient(t *testing.T, hc *http.Client) {
 	t.Helper()
-	prev := newHostHeaderInsecureClient
+	prevBaseline := newHostHeaderBaselineClient
+	prevDirect := newHostHeaderDirectClient
+	prevHost := newHostHeaderInsecureClient
+	newHostHeaderBaselineClient = func() *http.Client { return hc }
+	newHostHeaderDirectClient = func() *http.Client { return hc }
 	newHostHeaderInsecureClient = func(string) *http.Client { return hc }
-	t.Cleanup(func() { newHostHeaderInsecureClient = prev })
+	t.Cleanup(func() {
+		newHostHeaderBaselineClient = prevBaseline
+		newHostHeaderDirectClient = prevDirect
+		newHostHeaderInsecureClient = prevHost
+	})
 }
 
 func TestHostHeader_NoSeedsNoOp(t *testing.T) {
@@ -318,6 +326,7 @@ func TestHostHeader_ScoresCertsAndHeaders(t *testing.T) {
 func TestHostHeader_BaselineFetchError(t *testing.T) {
 	// Baseline fetch returns a transport error — Run must report it.
 	hc := &http.Client{Transport: errorRT{}}
+	withHostHeaderClient(t, hc)
 	_, err := hostHeaderTechnique{}.Run(context.Background(), "example.test", RunOptions{
 		HTTPClient: hc,
 		SeedIPs:    []netip.Addr{netip.MustParseAddr("203.0.113.1")},
