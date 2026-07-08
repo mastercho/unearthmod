@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.4] — 2026-07-08
+
+### Fixed
+
+- Classified Netlas `API key not found` HTTP 400 responses as `missing_api_key` instead of generic provider failures.
+- Filtered private/unroutable IPs at final aggregation so technique leaks such as `10.x.x.x` are not emitted as origin candidates.
+
 ## [1.0.3] — 2026-07-08
 
 ### Fixed
@@ -135,3 +142,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [1.0.1]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.1
 [1.0.2]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.2
 [1.0.3]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.3
+[1.0.4]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.4

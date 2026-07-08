@@ -264,6 +264,22 @@ func TestDiscover_FiltersCDNCandidatesAtAggregation(t *testing.T) {
 	}
 }
 
+func TestDiscover_FiltersPrivateCandidatesAtAggregation(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "private-leak", weight: 0.9, candidates: []techniques.Candidate{
+			{IP: "10.230.0.20"},
+			{IP: "198.51.100.7"},
+		}},
+	)
+	res, err := Discover(context.Background(), "x", testOpts())
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].IP != "198.51.100.7" {
+		t.Fatalf("want only public candidate, got %+v", res.Candidates)
+	}
+}
+
 func TestDiscover_PanicContained(t *testing.T) {
 	withSelector(t,
 		&fakeTech{name: "boom", weight: 0.5, doPanic: true},

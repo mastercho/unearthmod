@@ -235,6 +235,22 @@ func TestNetlas_400IncludesProviderBody(t *testing.T) {
 	}
 }
 
+func TestNetlas_400APIKeyNotFound_IsMissingKey(t *testing.T) {
+	withStubFingerprint(t, "fp", nil)
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://app.netlas.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(400, `{"detail":"Request had invalid authorization credentials: API key not found"}`), nil
+		},
+	})
+	_, err := (netlasCertTechnique{}).Run(context.Background(), "x", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    netlasKeys(),
+	})
+	if !errors.Is(err, ErrMissingAPIKey) {
+		t.Fatalf("400 API key rejection should map to ErrMissingAPIKey, got %v", err)
+	}
+}
+
 func TestNetlas_MalformedJSON(t *testing.T) {
 	withStubFingerprint(t, "fp", nil)
 	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){

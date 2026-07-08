@@ -247,7 +247,11 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 			w := resolveWeight(weights, r.t)
 			for _, c := range r.candidates {
 				a, err := netip.ParseAddr(c.IP)
-				if err != nil || cdn.IsCDNIP(a.Unmap()) {
+				if err != nil {
+					continue
+				}
+				a = a.Unmap()
+				if isUnroutableCandidate(a) || cdn.IsCDNIP(a) {
 					continue
 				}
 				g, ok := groups[c.IP]
@@ -457,6 +461,16 @@ func resolveWeight(w config.Weights, t techniques.Technique) float64 {
 		return v
 	}
 	return t.DefaultWeight()
+}
+
+func isUnroutableCandidate(a netip.Addr) bool {
+	return !a.IsValid() ||
+		a.IsLoopback() ||
+		a.IsLinkLocalUnicast() ||
+		a.IsLinkLocalMulticast() ||
+		a.IsMulticast() ||
+		a.IsPrivate() ||
+		a.IsUnspecified()
 }
 
 func reasonForErr(err error) string {

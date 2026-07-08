@@ -130,8 +130,15 @@ func netlasSearchPage(ctx context.Context, opts RunOptions, fp string) (netlasSe
 		return doc, fmt.Errorf("netlas_cert: status %d: %w", resp.StatusCode, ErrTierInsufficient)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body := providerErrorBody(resp.Body, netlasBodyLimit)
+		if isNetlasKeyError(body) {
+			return doc, fmt.Errorf("netlas_cert: status %d%s: %w", resp.StatusCode, body, ErrMissingAPIKey)
+		}
+		if isNetlasTierError(body) {
+			return doc, fmt.Errorf("netlas_cert: status %d%s: %w", resp.StatusCode, body, ErrTierInsufficient)
+		}
 		return doc, fmt.Errorf("netlas_cert: %s status %d%s",
-			netlasSearchURL, resp.StatusCode, providerErrorBody(resp.Body, netlasBodyLimit))
+			netlasSearchURL, resp.StatusCode, body)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		return doc, fmt.Errorf("netlas_cert decode: %w", err)
