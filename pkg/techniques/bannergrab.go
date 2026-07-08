@@ -37,9 +37,9 @@ func (bannerGrabTechnique) ConsumesCandidates() bool { return true }
 var bannerPorts = []int{21, 22, 25, 80, 443}
 
 const (
-	bannerWorkers   = 10
+	bannerWorkers   = 50
 	bannerReadLimit = 1024
-	bannerDeadline  = 5 * time.Second
+	bannerDeadline  = 2 * time.Second
 )
 
 // portDialer is the dial surface banner_grab depends on. Tests replace

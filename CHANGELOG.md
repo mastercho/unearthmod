@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.6] — 2026-07-08
+
+### Fixed
+
+- Stopped CDN detection from warning on normal missing CNAME/NS records when A/AAAA or HTTP signals already identify the CDN.
+- Reduced false timeout noise from active fanout techniques by bounding `host_header`, `phpinfo_scan`, and `banner_grab` probes more tightly on large candidate sets.
+- Fixed ranking aggregation so multiple hits from the same technique on one IP count as one technique contribution instead of inflating corroboration and score.
+
 ## [1.0.5] — 2026-07-08
 
 ### Added
@@ -160,3 +168,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [1.0.3]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.3
 [1.0.4]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.4
 [1.0.5]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.5
+[1.0.6]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.6

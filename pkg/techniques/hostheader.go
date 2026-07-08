@@ -46,11 +46,11 @@ func (hostHeaderTechnique) TimeoutOverride() time.Duration {
 }
 
 const (
-	hostHeaderWorkers             = 8
+	hostHeaderWorkers             = 24
 	hostHeaderPerProbeLimit       = 256 * 1024
 	hostHeaderMinBodyTextLen      = 80
 	hostHeaderConfirmThreshold    = 0.60
-	hostHeaderProbeTimeout        = 8 * time.Second
+	hostHeaderProbeTimeout        = 3 * time.Second
 	hostHeaderGenericErrorPenalty = 0.20
 )
 

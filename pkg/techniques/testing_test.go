@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -84,11 +85,14 @@ func withFakeResolver(t *testing.T, fr *fakeResolver) {
 // matches one of its routes. It records each request URL for assertions.
 type stubRoundTripper struct {
 	routes map[string]func(r *http.Request) (*http.Response, error)
+	mu     sync.Mutex
 	calls  []string
 }
 
 func (s *stubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	s.mu.Lock()
 	s.calls = append(s.calls, req.URL.String())
+	s.mu.Unlock()
 	for prefix, fn := range s.routes {
 		if strings.HasPrefix(req.URL.String(), prefix) {
 			return fn(req)

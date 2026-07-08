@@ -140,6 +140,37 @@ func TestDiscover_BasicGroupingAndScoring(t *testing.T) {
 	}
 }
 
+func TestDiscover_DeduplicatesTechniqueContributionPerIP(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "banner_grab", weight: 0.45, candidates: []techniques.Candidate{
+			{IP: "203.0.113.10", Evidence: "port 80"},
+			{IP: "203.0.113.10", Evidence: "port 443"},
+			{IP: "203.0.113.10", Evidence: "port 22"},
+		}},
+		&fakeTech{name: "ct_fingerprint", weight: 0.7, candidates: []techniques.Candidate{
+			{IP: "203.0.113.10", Evidence: "cert"},
+		}},
+	)
+	res, err := Discover(context.Background(), "example.test", testOpts())
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Candidates) != 1 {
+		t.Fatalf("Candidates: %+v", res.Candidates)
+	}
+	got := res.Candidates[0]
+	if got.Corroboration != 2 {
+		t.Fatalf("Corroboration = %d, want 2 distinct techniques (got %+v)", got.Corroboration, got.Techniques)
+	}
+	if len(got.Techniques) != 2 {
+		t.Fatalf("Techniques = %+v, want one hit per technique", got.Techniques)
+	}
+	wantScore := rank.Score([]float64{0.45, 0.7})
+	if math.Abs(got.Score-wantScore) > 1e-9 {
+		t.Fatalf("Score = %g, want %g", got.Score, wantScore)
+	}
+}
+
 func TestDiscover_SortOrder(t *testing.T) {
 	withSelector(t,
 		&fakeTech{name: "a", weight: 0.3, candidates: []techniques.Candidate{

@@ -278,11 +278,13 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 					g = &ScoredIP{IP: c.IP}
 					groups[c.IP] = g
 				}
-				g.Techniques = append(g.Techniques, TechniqueHit{
-					Name:     r.t.Name(),
-					Weight:   w,
-					Evidence: c.Evidence,
-				})
+				if !hasTechniqueHit(g.Techniques, r.t.Name()) {
+					g.Techniques = append(g.Techniques, TechniqueHit{
+						Name:     r.t.Name(),
+						Weight:   w,
+						Evidence: c.Evidence,
+					})
+				}
 				if v := validationFromMetadata(c.Metadata); v != nil {
 					if g.Validation == nil || v.Score > g.Validation.Score {
 						g.Validation = v
@@ -368,6 +370,15 @@ func buildObservations(candidates []ScoredIP) []cache.Observation {
 		}
 	}
 	return obs
+}
+
+func hasTechniqueHit(hits []TechniqueHit, name string) bool {
+	for _, h := range hits {
+		if h.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // techResult bundles one technique's outcome for engine-internal use.

@@ -74,6 +74,35 @@ func TestDetect_DNSErrorsPreserved(t *testing.T) {
 	}
 }
 
+func TestDetect_IgnoresMissingCNAMEAndNSWhenARecordMatches(t *testing.T) {
+	prevC, prevN, prevI := detectLookupCNAME, detectLookupNS, detectLookupIPAddr
+	detectLookupCNAME = func(context.Context, string) (string, error) {
+		return "", &net.DNSError{Err: "no such host", IsNotFound: true}
+	}
+	detectLookupNS = func(context.Context, string) ([]*net.NS, error) {
+		return nil, &net.DNSError{Err: "no such host", IsNotFound: true}
+	}
+	detectLookupIPAddr = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("104.26.10.69")}}, nil
+	}
+	t.Cleanup(func() {
+		detectLookupCNAME, detectLookupNS, detectLookupIPAddr = prevC, prevN, prevI
+	})
+
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+	target := strings.TrimPrefix(srv.URL, "https://")
+	det, err := Detect(context.Background(), target, srv.Client())
+	if err != nil {
+		t.Fatalf("missing optional DNS records should not warn when A/AAAA matches: %v", err)
+	}
+	if det.CDN != "cloudflare" {
+		t.Fatalf("CDN = %q, want cloudflare (signals=%v)", det.CDN, det.Signals)
+	}
+}
+
 func TestDetect_CNAMENotCDN(t *testing.T) {
 	prevC, prevN, prevI := detectLookupCNAME, detectLookupNS, detectLookupIPAddr
 	detectLookupCNAME = func(context.Context, string) (string, error) {

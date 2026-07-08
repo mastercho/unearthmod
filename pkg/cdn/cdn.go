@@ -18,6 +18,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -731,7 +732,9 @@ func Detect(ctx context.Context, target string, hc *http.Client) (Detection, err
 			}
 		}
 	} else {
-		captureErr(err)
+		if !isDNSLookupAbsence(err) {
+			captureErr(err)
+		}
 	}
 
 	// 2) NS records.
@@ -744,7 +747,9 @@ func Detect(ctx context.Context, target string, hc *http.Client) (Detection, err
 			}
 		}
 	} else {
-		captureErr(err)
+		if !isDNSLookupAbsence(err) {
+			captureErr(err)
+		}
 	}
 
 	// 3) A/AAAA → IP range.
@@ -774,6 +779,14 @@ func Detect(ctx context.Context, target string, hc *http.Client) (Detection, err
 	}
 
 	return det, firstErr
+}
+
+func isDNSLookupAbsence(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
 }
 
 func providerByDNS(host string) (string, bool) {
