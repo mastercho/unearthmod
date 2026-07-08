@@ -273,6 +273,32 @@ func TestDiscover_RecordsZeroCandidateTechniqueRun(t *testing.T) {
 	}
 }
 
+func TestDiscover_RecordsDiagnosticsWithoutRankingThem(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "host_header", weight: 0.85, candidates: []techniques.Candidate{{
+			Metadata: map[string]any{"diagnostic": map[string]any{
+				"event":       "baseline",
+				"message":     "baseline fetched",
+				"status_code": 200,
+				"url":         "https://example.test/",
+			}},
+		}}},
+	)
+	res, err := Discover(context.Background(), "example.test", testOpts())
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Candidates) != 0 {
+		t.Fatalf("diagnostic should not become ranked candidate: %+v", res.Candidates)
+	}
+	if len(res.TechniqueRuns) != 1 || res.TechniqueRuns[0].Candidates != 0 || len(res.TechniqueRuns[0].Diagnostics) != 1 {
+		t.Fatalf("diagnostic run not recorded correctly: %+v", res.TechniqueRuns)
+	}
+	if got := res.TechniqueRuns[0].Diagnostics[0]; got.Event != "baseline" || got.StatusCode != 200 {
+		t.Fatalf("diagnostic metadata wrong: %+v", got)
+	}
+}
+
 func TestDiscover_PreservesValidationMetadata(t *testing.T) {
 	withSelector(t,
 		&fakeTech{name: "host_header", weight: 0.85, candidates: []techniques.Candidate{

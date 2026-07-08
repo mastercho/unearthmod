@@ -179,10 +179,16 @@ func emitResultMeta(w io.Writer, res *unearth.Result) {
 		if r.Reason != "" {
 			_, _ = fmt.Fprintf(w, "unearth: %s — run[%s] status=%q candidates=%d reason=%q\n",
 				res.Target, r.Technique, r.Status, r.Candidates, r.Reason)
+			for _, d := range r.Diagnostics {
+				emitTechniqueDiagnostic(w, res.Target, r.Technique, d)
+			}
 			continue
 		}
 		_, _ = fmt.Fprintf(w, "unearth: %s — run[%s] status=%q candidates=%d\n",
 			res.Target, r.Technique, r.Status, r.Candidates)
+		for _, d := range r.Diagnostics {
+			emitTechniqueDiagnostic(w, res.Target, r.Technique, d)
+		}
 	}
 	for _, c := range res.Candidates {
 		if c.Validation == nil {
@@ -200,6 +206,21 @@ func emitResultMeta(w io.Writer, res *unearth.Result) {
 	}
 	for _, ww := range res.Warnings {
 		_, _ = fmt.Fprintf(w, "unearth: %s — warn: %s\n", res.Target, ww)
+	}
+}
+
+func emitTechniqueDiagnostic(w io.Writer, target, technique string, d unearth.TechniqueDiagnostic) {
+	switch d.Event {
+	case "baseline":
+		_, _ = fmt.Fprintf(w, "unearth: %s — diag[%s] baseline status=%d url=%s %s\n",
+			target, technique, d.StatusCode, d.URL, d.Message)
+	case "reject":
+		_, _ = fmt.Fprintf(w, "unearth: %s — diag[%s] reject ip=%s method=%s status=%d score=%.2f html=%.2f cert=%.2f headers=%.2f reason=%s url=%s\n",
+			target, technique, d.IP, d.Method, d.StatusCode, d.Score, d.HTMLScore, d.CertScore, d.HeaderScore, d.Reason, d.URL)
+	default:
+		if d.Message != "" {
+			_, _ = fmt.Fprintf(w, "unearth: %s — diag[%s] %s\n", target, technique, d.Message)
+		}
 	}
 }
 

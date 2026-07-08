@@ -123,10 +123,28 @@ type TechniqueErr struct {
 // It is primarily used by verbose CLI output so clean zero-result techniques
 // are visible instead of looking like they were never attempted.
 type TechniqueRun struct {
-	Technique  string `json:"technique"`
-	Status     string `json:"status"`
-	Candidates int    `json:"candidates"`
-	Reason     string `json:"reason,omitempty"`
+	Technique   string                `json:"technique"`
+	Status      string                `json:"status"`
+	Candidates  int                   `json:"candidates"`
+	Reason      string                `json:"reason,omitempty"`
+	Diagnostics []TechniqueDiagnostic `json:"diagnostics,omitempty"`
+}
+
+// TechniqueDiagnostic records non-candidate context produced by a technique.
+// It is used for verbose output, especially active validators that may reject
+// every candidate and otherwise look like they did nothing.
+type TechniqueDiagnostic struct {
+	Event       string  `json:"event"`
+	Message     string  `json:"message,omitempty"`
+	IP          string  `json:"ip,omitempty"`
+	Method      string  `json:"method,omitempty"`
+	URL         string  `json:"url,omitempty"`
+	StatusCode  int     `json:"status_code,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
+	Score       float64 `json:"score,omitempty"`
+	HTMLScore   float64 `json:"html_score,omitempty"`
+	CertScore   float64 `json:"cert_score,omitempty"`
+	HeaderScore float64 `json:"header_score,omitempty"`
 }
 
 // Result is the full output of a discovery run.
@@ -261,13 +279,18 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 				})
 				continue
 			}
+			diagnostics := diagnosticsFromCandidates(r.candidates)
 			result.TechniqueRuns = append(result.TechniqueRuns, TechniqueRun{
-				Technique:  r.t.Name(),
-				Status:     "ok",
-				Candidates: len(r.candidates),
+				Technique:   r.t.Name(),
+				Status:      "ok",
+				Candidates:  countRealCandidates(r.candidates),
+				Diagnostics: diagnostics,
 			})
 			w := resolveWeight(weights, r.t)
 			for _, c := range r.candidates {
+				if isDiagnosticCandidate(c) {
+					continue
+				}
 				a, err := netip.ParseAddr(c.IP)
 				if err != nil {
 					continue
@@ -386,6 +409,61 @@ func hasTechniqueHit(hits []TechniqueHit, name string) bool {
 		}
 	}
 	return false
+}
+
+func countRealCandidates(candidates []techniques.Candidate) int {
+	var n int
+	for _, c := range candidates {
+		if !isDiagnosticCandidate(c) {
+			n++
+		}
+	}
+	return n
+}
+
+func isDiagnosticCandidate(c techniques.Candidate) bool {
+	if c.Metadata == nil {
+		return false
+	}
+	_, ok := c.Metadata["diagnostic"]
+	return ok
+}
+
+func diagnosticsFromCandidates(candidates []techniques.Candidate) []TechniqueDiagnostic {
+	var out []TechniqueDiagnostic
+	for _, c := range candidates {
+		if c.Metadata == nil {
+			continue
+		}
+		raw, ok := c.Metadata["diagnostic"]
+		if !ok {
+			continue
+		}
+		if d := diagnosticFromMetadata(raw); d != nil {
+			out = append(out, *d)
+		}
+	}
+	return out
+}
+
+func diagnosticFromMetadata(raw any) *TechniqueDiagnostic {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return &TechniqueDiagnostic{
+		Event:       metaString(m, "event"),
+		Message:     metaString(m, "message"),
+		IP:          metaString(m, "ip"),
+		Method:      metaString(m, "method"),
+		URL:         metaString(m, "url"),
+		StatusCode:  metaInt(m, "status_code"),
+		Reason:      metaString(m, "reason"),
+		Score:       metaFloat(m, "score"),
+		HTMLScore:   metaFloat(m, "html_score"),
+		CertScore:   metaFloat(m, "cert_score"),
+		HeaderScore: metaFloat(m, "header_score"),
+	}
 }
 
 // techResult bundles one technique's outcome for engine-internal use.

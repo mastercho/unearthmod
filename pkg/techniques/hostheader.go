@@ -51,6 +51,7 @@ const (
 	hostHeaderConfirmThreshold    = 0.60
 	hostHeaderProbeTimeout        = 3 * time.Second
 	hostHeaderGenericErrorPenalty = 0.20
+	hostHeaderMaxDiagnostics      = 5
 )
 
 type hostHeaderEndpoint struct {
@@ -61,6 +62,20 @@ type hostHeaderEndpoint struct {
 type hostHeaderProbeMode struct {
 	Method string
 	Host   string
+}
+
+type hostHeaderDiagnostic struct {
+	Event       string
+	Message     string
+	IP          string
+	Method      string
+	URL         string
+	StatusCode  int
+	Reason      string
+	Score       float64
+	HTMLScore   float64
+	CertScore   float64
+	HeaderScore float64
 }
 
 var hostHeaderProbeEndpoints = []hostHeaderEndpoint{
@@ -103,7 +118,8 @@ func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptio
 	insecure := newHostHeaderInsecureClient(targetHost)
 
 	type result struct {
-		candidate Candidate
+		candidate  Candidate
+		diagnostic *hostHeaderDiagnostic
 	}
 	in := make(chan netip.Addr)
 	out := make(chan result)
@@ -118,8 +134,15 @@ func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptio
 				if isInvalidHostHeaderSeed(ip) {
 					continue
 				}
-				cand, matched := probeIPForHost(ctx, direct, insecure, ip, targetHost, base)
+				cand, matched, diagnostic := probeIPForHost(ctx, direct, insecure, ip, targetHost, base)
 				if !matched {
+					if diagnostic != nil {
+						select {
+						case out <- result{diagnostic: diagnostic}:
+						case <-ctx.Done():
+							return
+						}
+					}
 					continue
 				}
 				select {
@@ -145,7 +168,12 @@ func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptio
 
 	seen := map[netip.Addr]bool{}
 	var cands []Candidate
+	diagnostics := []hostHeaderDiagnostic{hostHeaderBaselineDiagnostic(base)}
 	for r := range out {
+		if r.diagnostic != nil {
+			diagnostics = append(diagnostics, *r.diagnostic)
+			continue
+		}
 		ip, err := netip.ParseAddr(r.candidate.IP)
 		if err != nil {
 			continue
@@ -158,6 +186,11 @@ func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptio
 		cands = append(cands, r.candidate)
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].IP < cands[j].IP })
+	if len(cands) == 0 {
+		for _, d := range topHostHeaderDiagnostics(diagnostics) {
+			cands = append(cands, hostHeaderDiagnosticCandidate(d))
+		}
+	}
 	return cands, nil
 }
 
@@ -215,9 +248,15 @@ func fetchBaseline(ctx context.Context, target string, hc *http.Client) (baselin
 	return baseline{}, firstErr
 }
 
-func probeIPForHost(ctx context.Context, directClient, hostClient *http.Client, ip netip.Addr, target string, base baseline) (Candidate, bool) {
+func probeIPForHost(ctx context.Context, directClient, hostClient *http.Client, ip netip.Addr, target string, base baseline) (Candidate, bool, *hostHeaderDiagnostic) {
 	var best Candidate
 	var bestScore float64
+	diagnostic := &hostHeaderDiagnostic{
+		Event:   "reject",
+		IP:      ip.String(),
+		Reason:  "no_response",
+		Message: "no HTTP/HTTPS probe response from candidate",
+	}
 	for _, ep := range hostHeaderProbeEndpoints {
 		for _, mode := range []hostHeaderProbeMode{
 			{Method: "direct"},
@@ -231,14 +270,21 @@ func probeIPForHost(ctx context.Context, directClient, hostClient *http.Client, 
 			if err != nil {
 				continue
 			}
-			if hasCDNHeaders(p.Header) || isGenericHostHeaderMatch(base.Status, p.Status) {
+			if hasCDNHeaders(p.Header) {
+				diagnostic = betterHostHeaderDiagnostic(diagnostic, hostHeaderRejectDiagnostic(ip, mode.Method, p, hostHeaderScore{}, "cdn_headers"))
+				continue
+			}
+			if isGenericHostHeaderMatch(base.Status, p.Status) {
+				diagnostic = betterHostHeaderDiagnostic(diagnostic, hostHeaderRejectDiagnostic(ip, mode.Method, p, hostHeaderScore{}, "generic_error_status"))
 				continue
 			}
 			score := scoreHostHeaderProbe(base, p)
 			if isWeakShortHostHeaderMatch(base, p, score) {
+				diagnostic = betterHostHeaderDiagnostic(diagnostic, hostHeaderRejectDiagnostic(ip, mode.Method, p, score, "weak_short_body"))
 				continue
 			}
 			if score.Overall < hostHeaderConfirmThreshold || score.Overall <= bestScore {
+				diagnostic = betterHostHeaderDiagnostic(diagnostic, hostHeaderRejectDiagnostic(ip, mode.Method, p, score, "below_threshold"))
 				continue
 			}
 			bestScore = score.Overall
@@ -264,7 +310,10 @@ func probeIPForHost(ctx context.Context, directClient, hostClient *http.Client, 
 			}
 		}
 	}
-	return best, best.IP != ""
+	if best.IP != "" {
+		return best, true, nil
+	}
+	return best, false, diagnostic
 }
 
 func fetchHostHeaderResponse(ctx context.Context, hc *http.Client, u, host string) (hostHeaderProbe, error) {
@@ -343,6 +392,92 @@ func scoreHostHeaderProbe(base baseline, p hostHeaderProbe) hostHeaderScore {
 func hostHeaderEvidence(ip netip.Addr, target, method string, p hostHeaderProbe, score hostHeaderScore) string {
 	return fmt.Sprintf("host_header: %s confirmed %s via %s %s:%d status=%d score=%.2f html=%.2f cert=%.2f headers=%.2f",
 		ip, target, method, p.Scheme, p.Port, p.Status, score.Overall, score.HTML, score.Cert, score.Headers)
+}
+
+func hostHeaderBaselineDiagnostic(base baseline) hostHeaderDiagnostic {
+	return hostHeaderDiagnostic{
+		Event:      "baseline",
+		Message:    fmt.Sprintf("baseline fetched status=%d title=%q text_len=%d", base.Status, base.Title, len(base.Text)),
+		URL:        base.URL,
+		StatusCode: base.Status,
+	}
+}
+
+func hostHeaderRejectDiagnostic(ip netip.Addr, method string, p hostHeaderProbe, score hostHeaderScore, reason string) *hostHeaderDiagnostic {
+	return &hostHeaderDiagnostic{
+		Event:       "reject",
+		IP:          ip.String(),
+		Method:      method,
+		URL:         p.URL,
+		StatusCode:  p.Status,
+		Reason:      reason,
+		Message:     fmt.Sprintf("best rejected probe score=%.2f reason=%s status=%d url=%s", score.Overall, reason, p.Status, p.URL),
+		Score:       roundScore(score.Overall),
+		HTMLScore:   roundScore(score.HTML),
+		CertScore:   roundScore(score.Cert),
+		HeaderScore: roundScore(score.Headers),
+	}
+}
+
+func betterHostHeaderDiagnostic(current, next *hostHeaderDiagnostic) *hostHeaderDiagnostic {
+	if current == nil {
+		return next
+	}
+	if next == nil {
+		return current
+	}
+	if next.Score != current.Score {
+		if next.Score > current.Score {
+			return next
+		}
+		return current
+	}
+	if current.StatusCode == 0 && next.StatusCode != 0 {
+		return next
+	}
+	return current
+}
+
+func topHostHeaderDiagnostics(diagnostics []hostHeaderDiagnostic) []hostHeaderDiagnostic {
+	var baseline []hostHeaderDiagnostic
+	var rejects []hostHeaderDiagnostic
+	for _, d := range diagnostics {
+		if d.Event == "baseline" {
+			baseline = append(baseline, d)
+			continue
+		}
+		rejects = append(rejects, d)
+	}
+	sort.Slice(rejects, func(i, j int) bool {
+		if rejects[i].Score != rejects[j].Score {
+			return rejects[i].Score > rejects[j].Score
+		}
+		return rejects[i].IP < rejects[j].IP
+	})
+	if len(rejects) > hostHeaderMaxDiagnostics {
+		rejects = rejects[:hostHeaderMaxDiagnostics]
+	}
+	return append(baseline, rejects...)
+}
+
+func hostHeaderDiagnosticCandidate(d hostHeaderDiagnostic) Candidate {
+	return Candidate{
+		Metadata: map[string]any{
+			"diagnostic": map[string]any{
+				"event":        d.Event,
+				"message":      d.Message,
+				"ip":           d.IP,
+				"method":       d.Method,
+				"url":          d.URL,
+				"status_code":  d.StatusCode,
+				"reason":       d.Reason,
+				"score":        d.Score,
+				"html_score":   d.HTMLScore,
+				"cert_score":   d.CertScore,
+				"header_score": d.HeaderScore,
+			},
+		},
+	}
 }
 
 func hostHeaderProbeURL(ip netip.Addr, ep hostHeaderEndpoint) string {

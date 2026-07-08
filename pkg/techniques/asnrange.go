@@ -238,7 +238,7 @@ func (asnSweepTechnique) Run(ctx context.Context, target string, opts RunOptions
 				if isReservedAddr(ip) {
 					continue
 				}
-				cand, matched := probeIPForHost(ctx, direct, insecure, ip, targetHost, base)
+				cand, matched, _ := probeIPForHost(ctx, direct, insecure, ip, targetHost, base)
 				if !matched {
 					continue
 				}

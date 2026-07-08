@@ -185,7 +185,7 @@ func TestHostHeader_IgnoresCDNResponse(t *testing.T) {
 		HTTPClient: hc,
 		SeedIPs:    []netip.Addr{netip.MustParseAddr("203.0.113.60")},
 	})
-	if len(out) != 0 {
+	if len(realHostHeaderCandidates(out)) != 0 {
 		t.Errorf("CDN-flagged response must not be confirmed: %+v", out)
 	}
 }
@@ -207,7 +207,7 @@ func TestHostHeader_FiltersCDNSeedIPs(t *testing.T) {
 		HTTPClient: hc,
 		SeedIPs:    []netip.Addr{netip.MustParseAddr("104.16.0.5")},
 	})
-	if len(out) != 0 {
+	if len(realHostHeaderCandidates(out)) != 0 {
 		t.Errorf("CDN seed should produce no candidate, got %+v", out)
 	}
 }
@@ -294,8 +294,51 @@ func TestHostHeader_RejectsGenericErrorMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(out) != 0 {
+	if len(realHostHeaderCandidates(out)) != 0 {
 		t.Fatalf("generic 404 match should not confirm: %+v", out)
+	}
+}
+
+func TestHostHeader_EmitsDiagnosticsWhenNoCandidateConfirms(t *testing.T) {
+	body := "<html><body>" + strings.Repeat("baseline content ", 20) + "</body></html>"
+	rt := &hostHeaderStubRT{
+		baselineBody: body,
+		byURL: map[string]func(*http.Request) (*http.Response, error){
+			"https://203.0.113.90:443/": func(*http.Request) (*http.Response, error) {
+				return stubResponse(200, "<html><body>different</body></html>"), nil
+			},
+		},
+	}
+	hc := &http.Client{Transport: rt}
+	withHostHeaderClient(t, hc)
+	out, err := hostHeaderTechnique{}.Run(context.Background(), "example.test", RunOptions{
+		HTTPClient: hc,
+		SeedIPs:    []netip.Addr{netip.MustParseAddr("203.0.113.90")},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(realHostHeaderCandidates(out)) != 0 {
+		t.Fatalf("unexpected confirmed candidates: %+v", out)
+	}
+	if len(out) == 0 {
+		t.Fatalf("expected diagnostics")
+	}
+	var sawBaseline, sawReject bool
+	for _, c := range out {
+		raw, ok := c.Metadata["diagnostic"].(map[string]any)
+		if !ok {
+			continue
+		}
+		switch raw["event"] {
+		case "baseline":
+			sawBaseline = true
+		case "reject":
+			sawReject = true
+		}
+	}
+	if !sawBaseline || !sawReject {
+		t.Fatalf("diagnostics missing baseline/reject: %+v", out)
 	}
 }
 
@@ -356,3 +399,16 @@ func TestHostHeaderTechnique_Metadata(t *testing.T) {
 }
 
 func bigInt(v int64) *big.Int { return big.NewInt(v) }
+
+func realHostHeaderCandidates(candidates []Candidate) []Candidate {
+	var out []Candidate
+	for _, c := range candidates {
+		if c.Metadata != nil {
+			if _, ok := c.Metadata["diagnostic"]; ok {
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}

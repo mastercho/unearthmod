@@ -98,6 +98,31 @@ func TestVerbose_EmitsNoConfirmedOriginSummary(t *testing.T) {
 	}
 }
 
+func TestVerbose_EmitsHostHeaderDiagnostics(t *testing.T) {
+	withRunner(t, func(_ context.Context, target string, _ unearth.Options) (*unearth.Result, error) {
+		r := fakeResult(target, "203.0.113.10")
+		r.TechniqueRuns = []unearth.TechniqueRun{{
+			Technique:  "host_header",
+			Status:     "ok",
+			Candidates: 0,
+			Diagnostics: []unearth.TechniqueDiagnostic{
+				{Event: "baseline", StatusCode: 200, URL: "https://example.test/", Message: "baseline fetched"},
+				{Event: "reject", IP: "203.0.113.10", Method: "host_header", StatusCode: 200, Score: 0.42, HTMLScore: 0.4, CertScore: 0.1, HeaderScore: 0.2, Reason: "below_threshold", URL: "https://203.0.113.10/"},
+			},
+		}}
+		return r, nil
+	})
+	code, _, stderr := captured(t, "--verbose", "example.test")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	for _, want := range []string{"diag[host_header] baseline", "diag[host_header] reject", "below_threshold", "score=0.42"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
+}
+
 func TestUsageError_HasStableErrorString(t *testing.T) {
 	e := errUsage("nope").(*usageError)
 	if e.Error() != "nope" || e.code != exitUsageError {

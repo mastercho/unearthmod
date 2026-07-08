@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.11] — 2026-07-08
+
+### Added
+
+- Added verbose `host_header` diagnostics showing the fetched baseline and the top rejected origin-verification probes with score components and rejection reasons.
+
 ## [1.0.10] — 2026-07-08
 
 ### Changed
@@ -204,3 +210,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [1.0.8]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.8
 [1.0.9]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.9
 [1.0.10]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.10
+[1.0.11]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.11
