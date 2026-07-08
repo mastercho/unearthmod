@@ -22,6 +22,16 @@ func TestIsCDNIP_KnownCloudflare(t *testing.T) {
 	}
 }
 
+func TestIsCDNIP_LegacyCloudflare10431(t *testing.T) {
+	addr := netip.MustParseAddr("104.31.74.201")
+	if !IsCDNIP(addr) {
+		t.Errorf("104.31.74.201 should be treated as Cloudflare CDN IP")
+	}
+	if got := ProviderForIP(addr); got != "cloudflare" {
+		t.Errorf("ProviderForIP(104.31.74.201) = %q, want cloudflare", got)
+	}
+}
+
 func TestIsCDNIP_NonCDNAddresses(t *testing.T) {
 	for _, s := range []string{
 		"8.8.8.8",     // Google DNS, not a CDN edge

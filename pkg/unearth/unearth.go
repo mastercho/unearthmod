@@ -219,6 +219,10 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 			}
 			w := resolveWeight(weights, r.t)
 			for _, c := range r.candidates {
+				a, err := netip.ParseAddr(c.IP)
+				if err != nil || cdn.IsCDNIP(a.Unmap()) {
+					continue
+				}
 				g, ok := groups[c.IP]
 				if !ok {
 					g = &ScoredIP{IP: c.IP}

@@ -214,6 +214,22 @@ func TestDiscover_MissingAPIKeySkipped(t *testing.T) {
 	}
 }
 
+func TestDiscover_FiltersCDNCandidatesAtAggregation(t *testing.T) {
+	withSelector(t,
+		&fakeTech{name: "leaky", weight: 0.9, candidates: []techniques.Candidate{
+			{IP: "104.31.74.201"},
+			{IP: "203.0.113.7"},
+		}},
+	)
+	res, err := Discover(context.Background(), "x", testOpts())
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(res.Candidates) != 1 || res.Candidates[0].IP != "203.0.113.7" {
+		t.Fatalf("want only non-CDN candidate, got %+v", res.Candidates)
+	}
+}
+
 func TestDiscover_PanicContained(t *testing.T) {
 	withSelector(t,
 		&fakeTech{name: "boom", weight: 0.5, doPanic: true},
