@@ -75,6 +75,27 @@ func TestVerbose_EmitsResultMetaOnStderrForJSONL(t *testing.T) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}
 	}
+	if !strings.Contains(stdout, `"status":"confirmed"`) {
+		t.Errorf("stdout should include confirmed status: %q", stdout)
+	}
+}
+
+func TestVerbose_EmitsNoConfirmedOriginSummary(t *testing.T) {
+	withRunner(t, func(_ context.Context, target string, _ unearth.Options) (*unearth.Result, error) {
+		r := fakeResult(target, "203.0.113.10")
+		r.TechniqueRuns = []unearth.TechniqueRun{{Technique: "host_header", Status: "ok", Candidates: 0}}
+		return r, nil
+	})
+	code, stdout, stderr := captured(t, "--verbose", "example.test")
+	if code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if !strings.Contains(stdout, `"status":"candidate"`) {
+		t.Errorf("stdout should include candidate status: %q", stdout)
+	}
+	if !strings.Contains(stderr, "no confirmed origin; showing ranked candidates only") {
+		t.Errorf("stderr missing no-confirmed summary:\n%s", stderr)
+	}
 }
 
 func TestUsageError_HasStableErrorString(t *testing.T) {

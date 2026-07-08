@@ -92,6 +92,9 @@ type Validation struct {
 type ScoredIP struct {
 	// IP is the candidate origin address.
 	IP string `json:"candidate_ip"`
+	// Status is "candidate" unless an active validation technique confirmed
+	// the IP, in which case it is "confirmed".
+	Status string `json:"status"`
 	// Score is the noisy-OR confidence in [0,1].
 	Score float64 `json:"score"`
 	// Corroboration is the number of distinct techniques that found this IP.
@@ -316,6 +319,10 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 		g.Score = rank.Score(ws)
 		g.Corroboration = len(g.Techniques)
 		g.SingleSource = g.Corroboration == 1
+		g.Status = "candidate"
+		if g.Validation != nil && g.Validation.Status != "" {
+			g.Status = g.Validation.Status
+		}
 		sort.Slice(g.Techniques, func(i, j int) bool { return g.Techniques[i].Name < g.Techniques[j].Name })
 		result.Candidates = append(result.Candidates, *g)
 	}

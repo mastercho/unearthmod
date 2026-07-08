@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.7] — 2026-07-08
+
+### Added
+
+- Added an explicit JSON/JSONL `status` field on each result (`candidate` or `confirmed`) so ranked candidates are not mistaken for verified origins.
+- Added verbose output that says when no confirmed origin was found and Unearth is only showing ranked candidates.
+
 ## [1.0.6] — 2026-07-08
 
 ### Fixed
@@ -169,3 +176,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 [1.0.4]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.4
 [1.0.5]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.5
 [1.0.6]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.6
+[1.0.7]: https://github.com/mastercho/unearthmod/releases/tag/v1.0.7

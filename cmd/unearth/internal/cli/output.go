@@ -51,7 +51,7 @@ func (s *jsonlSink) write(stdout, stderr io.Writer, res *unearth.Result, f *root
 	enc := json.NewEncoder(stdout)
 	limit := capN(s.top, len(res.Candidates))
 	for _, c := range res.Candidates[:limit] {
-		if err := enc.Encode(jsonlRow{Target: res.Target, ScoredIP: c}); err != nil {
+		if err := enc.Encode(jsonlRow{Target: res.Target, ScoredIP: normalizedScoredIP(c)}); err != nil {
 			return err
 		}
 	}
@@ -78,7 +78,7 @@ func (s *jsonSink) flush(stdout io.Writer, all []*unearth.Result) error {
 		// mutating the caller's slice.
 		cp := *r
 		n := capN(s.top, len(cp.Candidates))
-		cp.Candidates = cp.Candidates[:n]
+		cp.Candidates = normalizedScoredIPs(cp.Candidates[:n])
 		capped[i] = &cp
 	}
 	enc := json.NewEncoder(stdout)
@@ -191,6 +191,9 @@ func emitResultMeta(w io.Writer, res *unearth.Result) {
 		_, _ = fmt.Fprintf(w, "unearth: %s — confirmed[%s] via %s score=%.3f\n",
 			res.Target, c.IP, c.Validation.Technique, c.Validation.Score)
 	}
+	if len(res.Candidates) > 0 && !hasConfirmedCandidate(res.Candidates) {
+		_, _ = fmt.Fprintf(w, "unearth: %s — no confirmed origin; showing ranked candidates only\n", res.Target)
+	}
 	for _, e := range res.Errors {
 		_, _ = fmt.Fprintf(w, "unearth: %s — err[%s] reason=%q: %s\n",
 			res.Target, e.Technique, e.Reason, e.Err)
@@ -198,6 +201,15 @@ func emitResultMeta(w io.Writer, res *unearth.Result) {
 	for _, ww := range res.Warnings {
 		_, _ = fmt.Fprintf(w, "unearth: %s — warn: %s\n", res.Target, ww)
 	}
+}
+
+func hasConfirmedCandidate(candidates []unearth.ScoredIP) bool {
+	for _, c := range candidates {
+		if c.Validation != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func validationLabel(v *unearth.Validation) string {
@@ -208,4 +220,23 @@ func validationLabel(v *unearth.Validation) string {
 		return fmt.Sprintf("%s %.2f", v.Status, v.Score)
 	}
 	return v.Status
+}
+
+func normalizedScoredIPs(candidates []unearth.ScoredIP) []unearth.ScoredIP {
+	out := make([]unearth.ScoredIP, len(candidates))
+	for i, c := range candidates {
+		out[i] = normalizedScoredIP(c)
+	}
+	return out
+}
+
+func normalizedScoredIP(c unearth.ScoredIP) unearth.ScoredIP {
+	if c.Status != "" {
+		return c
+	}
+	c.Status = "candidate"
+	if c.Validation != nil && c.Validation.Status != "" {
+		c.Status = c.Validation.Status
+	}
+	return c
 }

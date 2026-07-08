@@ -118,6 +118,9 @@ func TestDiscover_BasicGroupingAndScoring(t *testing.T) {
 	if top.IP != "203.0.113.1" {
 		t.Errorf("top IP: want .1, got %s", top.IP)
 	}
+	if top.Status != "candidate" {
+		t.Errorf("top Status: want candidate, got %q", top.Status)
+	}
 	if top.Corroboration != 2 {
 		t.Errorf("Corroboration: want 2, got %d", top.Corroboration)
 	}
@@ -161,6 +164,9 @@ func TestDiscover_DeduplicatesTechniqueContributionPerIP(t *testing.T) {
 	got := res.Candidates[0]
 	if got.Corroboration != 2 {
 		t.Fatalf("Corroboration = %d, want 2 distinct techniques (got %+v)", got.Corroboration, got.Techniques)
+	}
+	if got.Status != "candidate" {
+		t.Fatalf("Status = %q, want candidate", got.Status)
 	}
 	if len(got.Techniques) != 2 {
 		t.Fatalf("Techniques = %+v, want one hit per technique", got.Techniques)
@@ -298,6 +304,9 @@ func TestDiscover_PreservesValidationMetadata(t *testing.T) {
 	}
 	if len(res.Candidates) != 1 {
 		t.Fatalf("Candidates: %+v", res.Candidates)
+	}
+	if res.Candidates[0].Status != "confirmed" {
+		t.Fatalf("Status = %q, want confirmed", res.Candidates[0].Status)
 	}
 	v := res.Candidates[0].Validation
 	if v == nil || v.Status != "confirmed" || v.Technique != "host_header" || v.Port != 443 {
