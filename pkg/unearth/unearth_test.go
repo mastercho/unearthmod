@@ -214,6 +214,18 @@ func TestDiscover_MissingAPIKeySkipped(t *testing.T) {
 	}
 }
 
+func TestHasKeyFor_FaviconHashUsesShodanOrCensys(t *testing.T) {
+	if !hasKeyFor("favicon_hash", techniques.APIKeys{ShodanAPIKey: "shodan"}) {
+		t.Fatal("favicon_hash should run with Shodan key")
+	}
+	if !hasKeyFor("favicon_hash", techniques.APIKeys{CensysPlatformPAT: "censys"}) {
+		t.Fatal("favicon_hash should run with Censys PAT")
+	}
+	if hasKeyFor("favicon_hash", techniques.APIKeys{}) {
+		t.Fatal("favicon_hash should skip with neither Shodan nor Censys")
+	}
+}
+
 func TestDiscover_FiltersCDNCandidatesAtAggregation(t *testing.T) {
 	withSelector(t,
 		&fakeTech{name: "leaky", weight: 0.9, candidates: []techniques.Candidate{

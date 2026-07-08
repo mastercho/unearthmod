@@ -172,6 +172,41 @@ func TestCriminalIP_QuotaEnvelope_IsTierInsufficient(t *testing.T) {
 	}
 }
 
+func TestCriminalIP_StringDataQuota_IsTierInsufficient(t *testing.T) {
+	withStubFingerprint(t, "fp", nil)
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://api.criminalip.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(200, `{"status":200,"data":"Request limit exceeded, please upgrade your plan"}`), nil
+		},
+	})
+	_, err := (criminalIPAssetTechnique{}).Run(context.Background(), "x", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    criminalIPKeys(),
+	})
+	if !errors.Is(err, ErrTierInsufficient) {
+		t.Fatalf("string data quota should map to ErrTierInsufficient, got %v", err)
+	}
+}
+
+func TestCriminalIP_StringDataNoResult_IsEmpty(t *testing.T) {
+	withStubFingerprint(t, "fp", nil)
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://api.criminalip.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(200, `{"status":200,"data":"No results found"}`), nil
+		},
+	})
+	out, err := (criminalIPAssetTechnique{}).Run(context.Background(), "x", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    criminalIPKeys(),
+	})
+	if err != nil {
+		t.Fatalf("no-result string should not error, got %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("want no candidates, got %+v", out)
+	}
+}
+
 func TestCriminalIP_BadKeyEnvelope_IsMissingKey(t *testing.T) {
 	withStubFingerprint(t, "fp", nil)
 	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){

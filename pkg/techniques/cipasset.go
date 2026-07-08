@@ -58,13 +58,36 @@ func (criminalIPAssetTechnique) DefaultWeight() float64 { return 0.70 }
 // human-readable `message`, frequently still under an HTTP 200; we classify
 // those alongside the HTTP-status checks.
 type criminalIPSearchResponse struct {
-	Status  int    `json:"status"`
-	Message string `json:"message,omitempty"`
-	Data    struct {
-		Result []struct {
-			IPAddress string `json:"ip_address"`
-		} `json:"result"`
-	} `json:"data"`
+	Status  int                  `json:"status"`
+	Message string               `json:"message,omitempty"`
+	Data    criminalIPSearchData `json:"data"`
+}
+
+type criminalIPSearchData struct {
+	Result  []criminalIPSearchResult `json:"result"`
+	Message string                   `json:"-"`
+}
+
+type criminalIPSearchResult struct {
+	IPAddress string `json:"ip_address"`
+}
+
+func (d *criminalIPSearchData) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	if strings.HasPrefix(trimmed, `"`) {
+		return json.Unmarshal(data, &d.Message)
+	}
+	var raw struct {
+		Result []criminalIPSearchResult `json:"result"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	d.Result = raw.Result
+	return nil
 }
 
 func (criminalIPAssetTechnique) Run(ctx context.Context, target string, opts RunOptions) ([]Candidate, error) {
@@ -134,6 +157,18 @@ func criminalIPSearchPage(ctx context.Context, opts RunOptions, fp string) (crim
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		return doc, fmt.Errorf("criminalip_asset decode: %w", err)
 	}
+	if msg := strings.TrimSpace(doc.Data.Message); msg != "" {
+		switch {
+		case isCriminalIPKeyError(msg):
+			return doc, fmt.Errorf("criminalip_asset: %s: %w", msg, ErrMissingAPIKey)
+		case isCriminalIPTierError(msg):
+			return doc, fmt.Errorf("criminalip_asset: %s: %w", msg, ErrTierInsufficient)
+		case isCriminalIPNoResult(msg):
+			return doc, nil
+		default:
+			return doc, errors.New("criminalip_asset: " + msg)
+		}
+	}
 	// Criminal IP often answers HTTP 200 with a non-200 `status` field and a
 	// message for quota or permission problems; classify those rather than
 	// returning an empty (and misleadingly "successful") result.
@@ -183,6 +218,13 @@ func isCriminalIPKeyError(msg string) bool {
 		strings.Contains(low, "invalid token") ||
 		(strings.Contains(low, "api key") && strings.Contains(low, "not found")) ||
 		strings.Contains(low, "unauthorized")
+}
+
+func isCriminalIPNoResult(msg string) bool {
+	low := strings.ToLower(msg)
+	return strings.Contains(low, "no result") ||
+		strings.Contains(low, "no data") ||
+		strings.Contains(low, "not found")
 }
 
 func criminalIPCandidates(doc criminalIPSearchResponse, target, fp string) []Candidate {

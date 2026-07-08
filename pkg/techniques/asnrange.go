@@ -20,8 +20,8 @@ func init() { Register(asnSweepTechnique{}) }
 // that the target's DNS resolves into. It works in three steps:
 //
 //  1. Resolve the target's A records to get a seed IP.
-//  2. Call BGPView's /ip/<ip> endpoint to find the ASN that owns that IP.
-//  3. Call BGPView's /asn/<asn>/prefixes endpoint to get all IPv4 prefixes
+//  2. Call RIPEstat's network-info endpoint to find the ASN that owns that IP.
+//  3. Call RIPEstat's announced-prefixes endpoint to get all IPv4 prefixes
 //     for that ASN, then iterate every IP in each prefix, skipping reserved
 //     ranges (RFC1918, loopback, multicast).
 //
@@ -37,12 +37,12 @@ func init() { Register(asnSweepTechnique{}) }
 // found but require the target to share ASN space with its origin (true for
 // many self-hosted origins, less so for large multi-tenant providers).
 //
-// No API key required. BGPView's free REST API is the backend.
+// No API key required. RIPEstat's public REST API is the backend.
 const (
 	asnSweepTTL          = 6 * time.Hour
 	asnSweepMaxIPs       = 65536 // warn if ASN prefix total exceeds this
-	bgpViewIPURL         = "https://api.bgpview.io/ip/%s"
-	bgpViewPrefixesURL   = "https://api.bgpview.io/asn/%d/prefixes"
+	ripeStatNetworkURL   = "https://stat.ripe.net/data/network-info/data.json?resource=%s"
+	ripeStatPrefixesURL  = "https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS%d"
 	asnSweepBodyLimit    = 2 * 1024 * 1024 // 2 MiB response guard
 	asnSweepProbeWorkers = 8
 )
@@ -76,26 +76,48 @@ func (asnSweepTechnique) Tier() Tier             { return TierActive }
 func (asnSweepTechnique) RequiresAPIKey() bool   { return false }
 func (asnSweepTechnique) DefaultWeight() float64 { return 0.70 }
 
-// bgpViewIPResponse is the BGPView /ip/<ip> response (abridged to fields we use).
-type bgpViewIPResponse struct {
-	Status string `json:"status"`
-	Data   struct {
-		PrefixesV4 []struct {
-			ASN struct {
-				ASN int `json:"asn"`
-			} `json:"asn"`
+// ripeStatNetworkInfoResponse is the RIPEstat network-info response
+// (abridged to the fields we use).
+type ripeStatNetworkInfoResponse struct {
+	Data struct {
+		ASNs asnList `json:"asns"`
+	} `json:"data"`
+}
+
+// ripeStatPrefixesResponse is the RIPEstat announced-prefixes response.
+type ripeStatPrefixesResponse struct {
+	Data struct {
+		Prefixes []struct {
+			Prefix string `json:"prefix"`
 		} `json:"prefixes"`
 	} `json:"data"`
 }
 
-// bgpViewPrefixesResponse is the BGPView /asn/<asn>/prefixes response.
-type bgpViewPrefixesResponse struct {
-	Status string `json:"status"`
-	Data   struct {
-		IPv4Prefixes []struct {
-			Prefix string `json:"prefix"`
-		} `json:"ipv4_prefixes"`
-	} `json:"data"`
+// asnList accepts both RIPEstat's documented string ASN list and integer
+// variants observed in compatible API proxies.
+type asnList []int
+
+func (a *asnList) UnmarshalJSON(data []byte) error {
+	var raw []any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	out := make([]int, 0, len(raw))
+	for _, v := range raw {
+		switch x := v.(type) {
+		case float64:
+			if x > 0 {
+				out = append(out, int(x))
+			}
+		case string:
+			var n int
+			if _, err := fmt.Sscanf(x, "%d", &n); err == nil && n > 0 {
+				out = append(out, n)
+			}
+		}
+	}
+	*a = out
+	return nil
 }
 
 // fetchASN is a package var so tests can replace the BGPView IP lookup.
@@ -123,6 +145,9 @@ func (asnSweepTechnique) Run(ctx context.Context, target string, opts RunOptions
 			break
 		}
 	}
+	if cdn.IsCDNIP(seedIP) {
+		return nil, nil
+	}
 
 	// Check cache for a prior run on this target.
 	cacheKey := cache.Key("asn_sweep", target, map[string]string{"ip": seedIP.String()})
@@ -136,17 +161,17 @@ func (asnSweepTechnique) Run(ctx context.Context, target string, opts RunOptions
 	// Step 2: look up the ASN for the seed IP.
 	asn, err := fetchASN(ctx, seedIP, hc)
 	if err != nil {
-		return nil, fmt.Errorf("asn_sweep: BGPView IP lookup for %s: %w", seedIP, err)
+		return nil, fmt.Errorf("asn_sweep: RIPEstat IP lookup for %s: %w", seedIP, err)
 	}
 	if asn == 0 {
-		// BGPView returned no ASN for this IP — nothing to sweep.
+		// RIPEstat returned no ASN for this IP; nothing to sweep.
 		return nil, nil
 	}
 
 	// Step 3: fetch all prefixes for the ASN.
 	prefixes, err := fetchPrefixes(ctx, asn, hc)
 	if err != nil {
-		return nil, fmt.Errorf("asn_sweep: BGPView prefix lookup for AS%d: %w", asn, err)
+		return nil, fmt.Errorf("asn_sweep: RIPEstat prefix lookup for AS%d: %w", asn, err)
 	}
 
 	// Parse prefixes, filter reserved, count IPs.
@@ -291,36 +316,32 @@ func isReservedAddr(a netip.Addr) bool {
 	return false
 }
 
-// realFetchASN calls BGPView /ip/<ip> and returns the ASN number.
+// realFetchASN calls RIPEstat network-info and returns the first ASN number.
 func realFetchASN(ctx context.Context, ip netip.Addr, hc *http.Client) (int, error) {
-	u := fmt.Sprintf(bgpViewIPURL, ip.String())
-	var doc bgpViewIPResponse
+	u := fmt.Sprintf(ripeStatNetworkURL, ip.String())
+	var doc ripeStatNetworkInfoResponse
 	if err := httpGetJSON(ctx, nil, "", hc, u, nil, &doc); err != nil {
 		return 0, err
 	}
-	if doc.Status != "ok" {
-		return 0, fmt.Errorf("BGPView returned status %q", doc.Status)
-	}
-	if len(doc.Data.PrefixesV4) == 0 {
+	if len(doc.Data.ASNs) == 0 {
 		return 0, nil
 	}
-	return doc.Data.PrefixesV4[0].ASN.ASN, nil
+	return doc.Data.ASNs[0], nil
 }
 
-// realFetchPrefixes calls BGPView /asn/<asn>/prefixes and returns the list
+// realFetchPrefixes calls RIPEstat announced-prefixes and returns the list
 // of IPv4 prefix strings.
 func realFetchPrefixes(ctx context.Context, asn int, hc *http.Client) ([]string, error) {
-	u := fmt.Sprintf(bgpViewPrefixesURL, asn)
-	var doc bgpViewPrefixesResponse
+	u := fmt.Sprintf(ripeStatPrefixesURL, asn)
+	var doc ripeStatPrefixesResponse
 	if err := httpGetJSON(ctx, nil, "", hc, u, nil, &doc); err != nil {
 		return nil, err
 	}
-	if doc.Status != "ok" {
-		return nil, fmt.Errorf("BGPView returned status %q", doc.Status)
-	}
-	out := make([]string, 0, len(doc.Data.IPv4Prefixes))
-	for _, p := range doc.Data.IPv4Prefixes {
-		out = append(out, p.Prefix)
+	out := make([]string, 0, len(doc.Data.Prefixes))
+	for _, p := range doc.Data.Prefixes {
+		if pref, err := netip.ParsePrefix(p.Prefix); err == nil && pref.Addr().Is4() {
+			out = append(out, p.Prefix)
+		}
 	}
 	return out, nil
 }

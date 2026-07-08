@@ -47,8 +47,46 @@ func TestAsnSweep_Metadata(t *testing.T) {
 	}
 }
 
-func TestAsnSweep_BGPViewIPLookupReturnsASN(t *testing.T) {
-	// Verify the real BGPView IP parsing logic via the stub path.
+func TestAsnSweep_RIPEstatParsers(t *testing.T) {
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://stat.ripe.net/": func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Path {
+			case "/data/network-info/data.json":
+				if got := req.URL.Query().Get("resource"); got != "203.0.113.1" {
+					t.Errorf("network-info resource = %q, want 203.0.113.1", got)
+				}
+				return stubResponse(200, `{"data":{"asns":["64500"]}}`), nil
+			case "/data/announced-prefixes/data.json":
+				if got := req.URL.Query().Get("resource"); got != "AS64500" {
+					t.Errorf("announced-prefixes resource = %q, want AS64500", got)
+				}
+				return stubResponse(200, `{"data":{"prefixes":[{"prefix":"203.0.113.0/24"},{"prefix":"2001:db8::/32"}]}}`), nil
+			default:
+				t.Fatalf("unexpected RIPEstat path: %s", req.URL.Path)
+				return nil, nil
+			}
+		},
+	})
+
+	asn, err := realFetchASN(context.Background(), netip.MustParseAddr("203.0.113.1"), hc)
+	if err != nil {
+		t.Fatalf("realFetchASN: %v", err)
+	}
+	if asn != 64500 {
+		t.Fatalf("ASN = %d, want 64500", asn)
+	}
+
+	prefixes, err := realFetchPrefixes(context.Background(), asn, hc)
+	if err != nil {
+		t.Fatalf("realFetchPrefixes: %v", err)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "203.0.113.0/24" {
+		t.Fatalf("prefixes = %+v, want only IPv4 203.0.113.0/24", prefixes)
+	}
+}
+
+func TestAsnSweep_RIPEstatIPLookupReturnsASN(t *testing.T) {
+	// Verify the ASN lookup flow via the stub path.
 	// We inject a known ASN and confirm it flows through to the prefix call.
 	fr := newFakeResolver()
 	fr.A["example.test"] = []string{"203.0.113.1"}
@@ -91,7 +129,7 @@ func TestAsnSweep_BGPViewIPLookupReturnsASN(t *testing.T) {
 	}
 }
 
-func TestAsnSweep_BGPViewPrefixLookupReturnsPrefixes(t *testing.T) {
+func TestAsnSweep_RIPEstatPrefixLookupReturnsPrefixes(t *testing.T) {
 	// Verify that IPs from the returned prefix are probed.
 	fr := newFakeResolver()
 	fr.A["example.test"] = []string{"203.0.113.1"}
@@ -149,6 +187,36 @@ func TestAsnSweep_BGPViewPrefixLookupReturnsPrefixes(t *testing.T) {
 	}
 	if !strings.Contains(out[0].Evidence, "AS64500") {
 		t.Errorf("evidence missing AS number: %q", out[0].Evidence)
+	}
+}
+
+func TestAsnSweep_CDNSeedSkipsLookup(t *testing.T) {
+	fr := newFakeResolver()
+	fr.A["example.test"] = []string{"104.31.74.201"}
+	withFakeResolver(t, fr)
+
+	lookupCalled := false
+	withStubASNFetch(t,
+		func(_ context.Context, _ netip.Addr, _ *http.Client) (int, error) {
+			lookupCalled = true
+			return 13335, nil
+		},
+		func(_ context.Context, _ int, _ *http.Client) ([]string, error) {
+			t.Error("fetchPrefixes must not be called for CDN seed IP")
+			return nil, nil
+		},
+	)
+
+	hc, _ := stubClient(nil)
+	out, err := asnSweepTechnique{}.Run(context.Background(), "example.test", RunOptions{HTTPClient: hc})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if lookupCalled {
+		t.Fatal("fetchASN must not be called for known CDN seed IP")
+	}
+	if len(out) != 0 {
+		t.Fatalf("want no candidates for CDN seed IP, got %+v", out)
 	}
 }
 
@@ -294,7 +362,7 @@ func TestAsnSweep_NonCDNIPBecomesCandidates(t *testing.T) {
 }
 
 func TestAsnSweep_ZeroASNReturnsNil(t *testing.T) {
-	// BGPView returning ASN=0 should produce no candidates without error.
+	// RIPEstat returning ASN=0 should produce no candidates without error.
 	fr := newFakeResolver()
 	fr.A["example.test"] = []string{"203.0.113.1"}
 	withFakeResolver(t, fr)

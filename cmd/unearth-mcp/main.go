@@ -25,6 +25,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"github.com/unearth-tool/unearth/internal/httpclient"
 	"github.com/unearth-tool/unearth/pkg/config"
 	"github.com/unearth-tool/unearth/pkg/techniques"
 	"github.com/unearth-tool/unearth/pkg/unearth"
@@ -38,7 +39,7 @@ func main() {
 
 	s := server.NewMCPServer(
 		"unearth-mcp",
-		"1.0.0",
+		httpclient.Version,
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),
 	)

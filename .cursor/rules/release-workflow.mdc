@@ -1,0 +1,13 @@
+---
+description: Release workflow for agent fixes
+alwaysApply: true
+---
+
+# Release Workflow
+
+When making code fixes in this repository:
+
+- Bump the project version as part of the fix.
+- Run focused verification for the changed behavior.
+- Commit the completed changes.
+- Push the commit to the tracked remote branch.
