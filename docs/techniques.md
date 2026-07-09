@@ -367,11 +367,11 @@ Active techniques make direct TCP/HTTP connections to *candidate IPs*, not to th
 
 **Tier:** Active | **Weight:** 0.75 | **API key:** `SHODAN_API_KEY` or `CENSYS_PLATFORM_PAT` (either is sufficient)
 
-**What it does:** Fetches the target's `/favicon.ico` (HTTPS, with an HTTP fallback) and computes its MurmurHash3 using Shodan's convention — `mmh3` over the standard-base64 encoding of the raw favicon bytes, line-wrapped at 76 columns with a trailing newline, taken as a signed 32-bit integer. It then queries Shodan (`http.favicon.hash:<hash>`) and/or Censys (`services.http.response.favicons.hashes`) for every other host presenting the same favicon. Non-CDN hits are origin candidates.
+**What it does:** Fetches favicon assets declared by the target page's icon links, then falls back to `/favicon.ico` (HTTPS, with an HTTP fallback), and computes each MurmurHash3 using Shodan's convention — `mmh3` over the standard-base64 encoding of the raw favicon bytes, line-wrapped at 76 columns with a trailing newline, taken as a signed 32-bit integer. It then queries Shodan (`http.favicon.hash:<hash>`) and/or Censys (`services.http.response.favicons.hashes`) for every other host presenting any matching favicon. Non-CDN hits are origin candidates.
 
 **Why it complements cert pivots:** A favicon hash is stable across IP moves and TLS-certificate rotations. A host that rotated its certificate is invisible to `shodan_cert` / `censys_cert` but is still caught here, because its application favicon rarely changes between moves.
 
-**Data source:** the target's own `/favicon.ico`, plus the Shodan host-search and Censys Platform global-search APIs.
+**Data source:** the target's declared favicon assets and `/favicon.ico`, plus the Shodan host-search and Censys Platform global-search APIs.
 
 **Limitations:** False positives rise when the target uses a stock framework favicon (e.g. a default admin-panel icon) shared by many unrelated hosts — the existing CDN filter removes edge nodes but not unrelated origins. Targets without a favicon produce no candidates (a graceful no-op, not an error). Requires at least one of the two API keys; with neither configured the technique skips gracefully, exactly like `shodan_cert` and `censys_cert`.
 

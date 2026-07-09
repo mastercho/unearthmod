@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/bits"
@@ -16,11 +17,12 @@ import (
 
 	"github.com/unearth-tool/unearth/pkg/cache"
 	"github.com/unearth-tool/unearth/pkg/cdn"
+	"golang.org/x/net/html"
 )
 
 func init() { Register(faviconHashTechnique{}) }
 
-// faviconHashTechnique fetches the target's /favicon.ico, computes its
+// faviconHashTechnique fetches the target's declared favicon, computes its
 // MurmurHash3 the way Shodan, Censys, FOFA and ZoomEye do — mmh3 over the
 // standard-base64 encoding of the raw favicon bytes — then asks Shodan
 // (http.favicon.hash:<hash>) and/or Censys
@@ -33,7 +35,7 @@ func init() { Register(faviconHashTechnique{}) }
 // complements the cert-pivot techniques (shodan_cert / censys_cert): a host
 // that rotated its TLS cert is missed by cert pivots but caught here.
 //
-// Tier: Active. One outbound GET to /favicon.ico touches the target; the
+// Tier: Active. One outbound GET to the target page plus favicon touches the
 // search-engine queries themselves are passive third-party lookups.
 //
 // Either backend alone is sufficient. With neither API key configured the
@@ -45,10 +47,12 @@ func init() { Register(faviconHashTechnique{}) }
 // services.http.response.favicons.hashes field. Both endpoints are reused
 // from the existing cert techniques' conventions.
 const (
-	faviconShodanField = "http.favicon.hash"
-	faviconCensysField = "host.services.http.response.favicons.hashes"
-	faviconHashTTL     = 1 * time.Hour
-	faviconBodyLimit   = 4 * 1024 * 1024 // 4 MiB — favicons are tiny; cap defends against a hostile body.
+	faviconShodanField  = "http.favicon.hash"
+	faviconCensysField  = "host.services.http.response.favicons.hashes"
+	faviconHashTTL      = 1 * time.Hour
+	faviconBodyLimit    = 4 * 1024 * 1024 // 4 MiB — favicons are tiny; cap defends against a hostile body.
+	faviconFetchTimeout = 8 * time.Second
+	faviconMaxIcons     = 8
 )
 
 type faviconHashTechnique struct{}
@@ -58,11 +62,16 @@ func (faviconHashTechnique) Tier() Tier             { return TierActive }
 func (faviconHashTechnique) RequiresAPIKey() bool   { return true }
 func (faviconHashTechnique) DefaultWeight() float64 { return 0.75 }
 
-// fetchFavicon is a package var so tests can stub the favicon fetch without
+type fetchedFavicon struct {
+	Body []byte
+	URL  string
+}
+
+// fetchFavicons is a package var so tests can stub the favicon fetch without
 // standing up a real HTTP server for the target. It returns the raw favicon
 // bytes, or an error when the favicon cannot be retrieved (404, network
 // failure on both schemes, etc.).
-var fetchFavicon = realFetchFavicon
+var fetchFavicons = realFetchFavicons
 
 func (faviconHashTechnique) Run(ctx context.Context, target string, opts RunOptions) ([]Candidate, error) {
 	haveShodan := opts.APIKeys.ShodanAPIKey != ""
@@ -71,38 +80,63 @@ func (faviconHashTechnique) Run(ctx context.Context, target string, opts RunOpti
 		return nil, ErrMissingAPIKey
 	}
 
-	raw, err := fetchFavicon(ctx, target, opts.HTTPClient)
+	favicons, err := fetchFavicons(ctx, target, newFaviconFetchClient())
 	if err != nil {
 		return nil, fmt.Errorf("favicon_hash fetch: %w", err)
 	}
-	if len(raw) == 0 {
+	if len(favicons) == 0 {
 		// No favicon body — nothing to hash, no candidates. Not an error:
 		// many sites legitimately lack a favicon.
-		return nil, nil
+		return []Candidate{faviconDiagnosticCandidate("no favicon body fetched; Shodan/Censys favicon search was not queried")}, nil
 	}
-
-	hash := faviconMMH3(raw)
 
 	seen := map[netip.Addr]bool{}
+	seenHashes := map[int32]bool{}
 	var out []Candidate
+	var backendErrs []error
+	successes := 0
 
-	if haveShodan {
-		cands, err := faviconShodanQuery(ctx, target, hash, opts)
-		if err != nil {
-			return nil, err
+	for _, fav := range favicons {
+		hash := faviconMMH3(fav.Body)
+		if seenHashes[hash] {
+			continue
 		}
-		out = appendFaviconCandidates(out, seen, cands)
+		seenHashes[hash] = true
+		out = append(out, faviconDiagnosticCandidate(fmt.Sprintf("fetched favicon url=%s bytes=%d mmh3:%d", fav.URL, len(fav.Body), hash)))
+
+		if haveShodan {
+			cands, err := faviconShodanQuery(ctx, target, hash, opts)
+			if err != nil {
+				backendErrs = append(backendErrs, err)
+				out = append(out, faviconDiagnosticCandidate(fmt.Sprintf("Shodan favicon search failed for mmh3:%d: %v", hash, err)))
+			} else {
+				successes++
+				out = append(out, faviconDiagnosticCandidate(fmt.Sprintf("Shodan favicon search produced %d non-CDN candidate(s) for mmh3:%d", len(cands), hash)))
+				out = appendFaviconCandidates(out, seen, cands)
+			}
+		}
+		if haveCensys {
+			cands, err := faviconCensysQuery(ctx, target, hash, opts)
+			if err != nil {
+				backendErrs = append(backendErrs, err)
+				out = append(out, faviconDiagnosticCandidate(fmt.Sprintf("Censys favicon search failed for mmh3:%d: %v", hash, err)))
+			} else {
+				successes++
+				out = append(out, faviconDiagnosticCandidate(fmt.Sprintf("Censys favicon search produced %d non-CDN candidate(s) for mmh3:%d", len(cands), hash)))
+				out = appendFaviconCandidates(out, seen, cands)
+			}
+		}
 	}
-	if haveCensys {
-		cands, err := faviconCensysQuery(ctx, target, hash, opts)
-		if err != nil {
-			return nil, err
-		}
-		out = appendFaviconCandidates(out, seen, cands)
+	if successes == 0 && len(backendErrs) > 0 {
+		return nil, errors.Join(backendErrs...)
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].IP < out[j].IP })
 	return out, nil
+}
+
+var newFaviconFetchClient = func() *http.Client {
+	return newHostHeaderBrowserClient(faviconFetchTimeout, "")
 }
 
 // faviconMMH3 computes the favicon hash exactly as Shodan does: base64-encode
@@ -212,39 +246,99 @@ func appendFaviconCandidates(out []Candidate, seen map[netip.Addr]bool, cands []
 	return out
 }
 
-// realFetchFavicon GETs https://<target>/favicon.ico, falling back to
-// http:// when the HTTPS attempt fails. It returns the raw bytes on a 2xx
-// response; a 404 (or any non-2xx) yields a nil body so the caller treats
-// it as "no favicon" rather than a hard error.
+// realFetchFavicon resolves the same kind of favicon source Shodan usually
+// indexes: first icon links declared by the page HTML, then /favicon.ico.
+// It falls back from HTTPS to HTTP and treats reachable non-2xx icon URLs as
+// "no favicon" rather than a hard error.
 func realFetchFavicon(ctx context.Context, target string, hc *http.Client) ([]byte, error) {
+	favicons, err := realFetchFavicons(ctx, target, hc)
+	if err != nil || len(favicons) == 0 {
+		return nil, err
+	}
+	return favicons[0].Body, nil
+}
+
+func realFetchFavicons(ctx context.Context, target string, hc *http.Client) ([]fetchedFavicon, error) {
 	if hc == nil {
 		hc = http.DefaultClient
 	}
+	var sawResponse bool
+	var lastErr error
+	seenURL := map[string]bool{}
+	seenHash := map[int32]bool{}
+	var out []fetchedFavicon
 	for _, scheme := range []string{"https", "http"} {
-		raw, ok, err := faviconGet(ctx, scheme+"://"+target+"/favicon.ico", hc)
-		if err != nil {
-			// Network-level failure on this scheme — try the next one.
-			continue
+		pageURL := scheme + "://" + target + "/"
+		baseURL, _ := url.Parse(pageURL)
+		var iconURLs []string
+		if body, finalURL, ok, err := faviconPage(ctx, pageURL, hc); err != nil {
+			lastErr = err
+		} else if ok {
+			sawResponse = true
+			if finalURL != nil {
+				baseURL = finalURL
+			}
+			iconURLs = append(iconURLs, faviconIconURLs(body, baseURL)...)
 		}
-		if !ok {
-			// Reached the server but no favicon (e.g. 404). A definitive
-			// answer: don't bother with the other scheme.
-			return nil, nil
+		iconURLs = appendUniqueURL(iconURLs, resolveFaviconURL(baseURL, "/favicon.ico"))
+		for _, iconURL := range iconURLs {
+			if seenURL[iconURL] {
+				continue
+			}
+			seenURL[iconURL] = true
+			raw, ok, err := faviconGet(ctx, iconURL, hc)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			sawResponse = true
+			if ok && len(raw) > 0 {
+				hash := faviconMMH3(raw)
+				if seenHash[hash] {
+					continue
+				}
+				seenHash[hash] = true
+				out = append(out, fetchedFavicon{Body: raw, URL: iconURL})
+				if len(out) >= faviconMaxIcons {
+					return out, nil
+				}
+			}
 		}
-		return raw, nil
 	}
-	return nil, fmt.Errorf("favicon_hash: could not fetch /favicon.ico for %s over https or http", target)
+	if len(out) > 0 {
+		return out, nil
+	}
+	if sawResponse {
+		return nil, nil
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("favicon_hash: could not fetch favicon for %s over https or http: %w", target, lastErr)
+	}
+	return nil, fmt.Errorf("favicon_hash: could not fetch favicon for %s over https or http", target)
 }
 
 // faviconGet performs a single GET. ok reports whether the server returned a
 // favicon body (2xx). A non-2xx status returns ok=false with a nil error so
 // the caller can distinguish "no favicon" from "transport failed".
 func faviconGet(ctx context.Context, rawURL string, hc *http.Client) (body []byte, ok bool, err error) {
+	return faviconGET(ctx, rawURL, hc, "image/x-icon,image/vnd.microsoft.icon,image/*,*/*")
+}
+
+func faviconPage(ctx context.Context, rawURL string, hc *http.Client) (body string, finalURL *url.URL, ok bool, err error) {
+	b, ok, err := faviconGET(ctx, rawURL, hc, "text/html,application/xhtml+xml")
+	if err != nil || !ok {
+		return "", nil, ok, err
+	}
+	u, _ := url.Parse(rawURL)
+	return string(b), u, true, nil
+}
+
+func faviconGET(ctx context.Context, rawURL string, hc *http.Client, accept string) (body []byte, ok bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, false, err
 	}
-	req.Header.Set("Accept", "image/x-icon,image/vnd.microsoft.icon,image/*,*/*")
+	req.Header.Set("Accept", accept)
 	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, false, err
@@ -260,10 +354,73 @@ func faviconGet(ctx context.Context, rawURL string, hc *http.Client) (body []byt
 	return b, true, nil
 }
 
+func faviconIconURLs(raw string, base *url.URL) []string {
+	doc, err := html.Parse(strings.NewReader(raw))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && strings.EqualFold(n.Data, "link") {
+			var rel, href string
+			for _, a := range n.Attr {
+				switch strings.ToLower(a.Key) {
+				case "rel":
+					rel = a.Val
+				case "href":
+					href = a.Val
+				}
+			}
+			if faviconRel(rel) {
+				out = appendUniqueURL(out, resolveFaviconURL(base, href))
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return out
+}
+
+func faviconRel(rel string) bool {
+	for _, field := range strings.Fields(strings.ToLower(rel)) {
+		if strings.Contains(field, "icon") {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveFaviconURL(base *url.URL, href string) string {
+	href = strings.TrimSpace(href)
+	if href == "" || strings.HasPrefix(strings.ToLower(href), "data:") || base == nil {
+		return ""
+	}
+	u, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+	return base.ResolveReference(u).String()
+}
+
+func appendUniqueURL(urls []string, next string) []string {
+	if next == "" {
+		return urls
+	}
+	for _, existing := range urls {
+		if existing == next {
+			return urls
+		}
+	}
+	return append(urls, next)
+}
+
 // --- Shodan query path ---
 
 func faviconShodanQuery(ctx context.Context, target string, hash int32, opts RunOptions) ([]Candidate, error) {
-	key := cache.Key("favicon_hash", target, map[string]string{"hash": fmt.Sprintf("%d", hash), "backend": "shodan"})
+	key := cache.Key("favicon_hash", target, map[string]string{"hash": fmt.Sprintf("%d", hash), "backend": "shodan", "schema": "v2"})
 	var cached shodanSearchResponse
 	if data, ok := cacheRead(opts.Cache, opts, key); ok {
 		if jerr := json.Unmarshal(data, &cached); jerr == nil {
@@ -344,8 +501,8 @@ func faviconShodanCandidates(doc shodanSearchResponse, target string, hash int32
 	seen := map[netip.Addr]bool{}
 	var out []Candidate
 	for _, m := range doc.Matches {
-		a, err := netip.ParseAddr(m.IPStr)
-		if err != nil {
+		a, ok := shodanMatchAddr(m)
+		if !ok {
 			continue
 		}
 		a = a.Unmap()
@@ -361,6 +518,17 @@ func faviconShodanCandidates(doc shodanSearchResponse, target string, hash int32
 		})
 	}
 	return out
+}
+
+func faviconDiagnosticCandidate(message string) Candidate {
+	return Candidate{
+		Metadata: map[string]any{
+			"diagnostic": map[string]any{
+				"event":   "info",
+				"message": message,
+			},
+		},
+	}
 }
 
 // --- Censys query path ---

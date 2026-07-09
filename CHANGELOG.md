@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.12] — 2026-07-09
+
+### Fixed
+
+- Switched `favicon_hash` favicon fetching to the same browser-like uTLS client used by active origin verification so Cloudflare-protected targets can still be hashed and searched in Shodan/Censys.
+- Expanded `favicon_hash` to query every declared page icon plus `/favicon.ico`, preserved Shodan numeric `ip` fields in favicon and certificate search results, and forced a refreshed Shodan cache schema so hits such as `5.226.140.251` are no longer dropped before `host_header` can validate them.
+- Kept successful `favicon_hash` backend results when the other configured backend is plan-gated, so a Censys 403 no longer discards Shodan candidates.
+
 ## [1.0.11] — 2026-07-08
 
 ### Added

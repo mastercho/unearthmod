@@ -13,9 +13,14 @@ import (
 // supplied bytes/error for any target.
 func withStubFavicon(t *testing.T, raw []byte, err error) {
 	t.Helper()
-	prev := fetchFavicon
-	fetchFavicon = func(context.Context, string, *http.Client) ([]byte, error) { return raw, err }
-	t.Cleanup(func() { fetchFavicon = prev })
+	prev := fetchFavicons
+	fetchFavicons = func(context.Context, string, *http.Client) ([]fetchedFavicon, error) {
+		if raw == nil {
+			return nil, err
+		}
+		return []fetchedFavicon{{Body: raw, URL: "https://example.test/favicon.ico"}}, err
+	}
+	t.Cleanup(func() { fetchFavicons = prev })
 }
 
 // faviconTestBytes is a fixed payload whose Shodan-convention mmh3 hash is
@@ -69,12 +74,12 @@ func TestMurmurHash3X86_32_CanonicalVectors(t *testing.T) {
 func TestFaviconHash_NoKeys_Skip(t *testing.T) {
 	// Neither SHODAN nor CENSYS key present → graceful skip, no fetch.
 	fetched := false
-	prev := fetchFavicon
-	fetchFavicon = func(context.Context, string, *http.Client) ([]byte, error) {
+	prev := fetchFavicons
+	fetchFavicons = func(context.Context, string, *http.Client) ([]fetchedFavicon, error) {
 		fetched = true
-		return faviconTestBytes, nil
+		return []fetchedFavicon{{Body: faviconTestBytes, URL: "https://example.test/favicon.ico"}}, nil
 	}
-	t.Cleanup(func() { fetchFavicon = prev })
+	t.Cleanup(func() { fetchFavicons = prev })
 
 	_, err := faviconHashTechnique{}.Run(context.Background(), "example.test", RunOptions{})
 	if !errors.Is(err, ErrMissingAPIKey) {
@@ -111,14 +116,15 @@ func TestFaviconHash_Shodan_Happy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(out) != 1 {
-		t.Fatalf("want 1 non-CDN candidate, got %d: %+v", len(out), out)
+	real := realFaviconCandidates(out)
+	if len(real) != 1 {
+		t.Fatalf("want 1 non-CDN candidate, got %d: %+v", len(real), out)
 	}
-	if out[0].IP != "203.0.113.7" {
-		t.Errorf("candidate IP: got %q", out[0].IP)
+	if real[0].IP != "203.0.113.7" {
+		t.Errorf("candidate IP: got %q", real[0].IP)
 	}
-	if !strings.Contains(out[0].Evidence, "Shodan") || !strings.Contains(out[0].Evidence, "mmh3:") {
-		t.Errorf("evidence: %q", out[0].Evidence)
+	if !strings.Contains(real[0].Evidence, "Shodan") || !strings.Contains(real[0].Evidence, "mmh3:") {
+		t.Errorf("evidence: %q", real[0].Evidence)
 	}
 	if len(rt.calls) != 1 {
 		t.Errorf("want one HTTP call, got %d", len(rt.calls))
@@ -144,7 +150,7 @@ func TestFaviconHash_NotFound_NoFinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(out) != 0 {
+	if len(realFaviconCandidates(out)) != 0 {
 		t.Fatalf("want zero candidates on missing favicon, got %+v", out)
 	}
 	if len(rt.calls) != 0 {
@@ -168,7 +174,7 @@ func TestFaviconHash_AllCDN_NoFinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(out) != 0 {
+	if len(realFaviconCandidates(out)) != 0 {
 		t.Fatalf("want zero candidates when all hits are CDN, got %+v", out)
 	}
 }
@@ -191,11 +197,12 @@ func TestFaviconHash_Censys_Happy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(out) != 1 || out[0].IP != "198.51.100.9" {
+	real := realFaviconCandidates(out)
+	if len(real) != 1 || real[0].IP != "198.51.100.9" {
 		t.Fatalf("want single non-CDN Censys candidate, got %+v", out)
 	}
-	if !strings.Contains(out[0].Evidence, "Censys") {
-		t.Errorf("evidence: %q", out[0].Evidence)
+	if !strings.Contains(real[0].Evidence, "Censys") {
+		t.Errorf("evidence: %q", real[0].Evidence)
 	}
 }
 
@@ -219,11 +226,95 @@ func TestFaviconHash_BothBackends_Dedup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(out) != 2 {
-		t.Fatalf("want 2 deduped candidates, got %d: %+v", len(out), out)
+	real := realFaviconCandidates(out)
+	if len(real) != 2 {
+		t.Fatalf("want 2 deduped candidates, got %d: %+v", len(real), out)
 	}
-	if out[0].IP != "198.51.100.9" || out[1].IP != "203.0.113.7" {
-		t.Errorf("expected sorted [198.51.100.9 203.0.113.7], got %+v", out)
+	if real[0].IP != "198.51.100.9" || real[1].IP != "203.0.113.7" {
+		t.Errorf("expected sorted [198.51.100.9 203.0.113.7], got %+v", real)
+	}
+}
+
+func TestFaviconHash_ShodanSurvivesCensysTierError(t *testing.T) {
+	withStubFavicon(t, faviconTestBytes, nil)
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://api.shodan.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(200, `{"matches":[{"ip_str":"203.0.113.7"}],"total":1}`), nil
+		},
+		"https://api.platform.censys.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(403, `{"error":"forbidden"}`), nil
+		},
+	})
+
+	out, err := faviconHashTechnique{}.Run(context.Background(), "example.test", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    APIKeys{ShodanAPIKey: "k", CensysPlatformPAT: "pat"},
+	})
+	if err != nil {
+		t.Fatalf("Run should tolerate one backend failure: %v", err)
+	}
+	real := realFaviconCandidates(out)
+	if len(real) != 1 || real[0].IP != "203.0.113.7" {
+		t.Fatalf("want Shodan candidate despite Censys failure, got %+v", real)
+	}
+}
+
+func TestFaviconHash_QueriesMultipleDiscoveredIcons(t *testing.T) {
+	prev := fetchFavicons
+	fetchFavicons = func(context.Context, string, *http.Client) ([]fetchedFavicon, error) {
+		return []fetchedFavicon{
+			{Body: []byte("first-icon"), URL: "https://example.test/first.ico"},
+			{Body: []byte("second-icon"), URL: "https://example.test/second.ico"},
+		}, nil
+	}
+	t.Cleanup(func() { fetchFavicons = prev })
+
+	firstHash := faviconMMH3([]byte("first-icon"))
+	secondHash := faviconMMH3([]byte("second-icon"))
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://api.shodan.io/": func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Query().Get("query"), strconv.Itoa(int(firstHash))) {
+				return stubResponse(200, `{"matches":[],"total":0}`), nil
+			}
+			if strings.Contains(req.URL.Query().Get("query"), strconv.Itoa(int(secondHash))) {
+				return stubResponse(200, `{"matches":[{"ip_str":"5.226.140.251"}],"total":1}`), nil
+			}
+			t.Fatalf("unexpected Shodan query: %s", req.URL.RawQuery)
+			return stubResponse(200, `{"matches":[],"total":0}`), nil
+		},
+	})
+
+	out, err := faviconHashTechnique{}.Run(context.Background(), "example.test", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    APIKeys{ShodanAPIKey: "k"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	real := realFaviconCandidates(out)
+	if len(real) != 1 || real[0].IP != "5.226.140.251" {
+		t.Fatalf("want second favicon Shodan candidate, got %+v", real)
+	}
+}
+
+func TestFaviconHash_Shodan_NumericIPFallback(t *testing.T) {
+	withStubFavicon(t, faviconTestBytes, nil)
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://api.shodan.io/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(200, `{"matches":[{"ip":98733307}],"total":1}`), nil
+		},
+	})
+
+	out, err := faviconHashTechnique{}.Run(context.Background(), "example.test", RunOptions{
+		HTTPClient: hc,
+		APIKeys:    APIKeys{ShodanAPIKey: "shodan-tok"},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	real := realFaviconCandidates(out)
+	if len(real) != 1 || real[0].IP != "5.226.140.251" {
+		t.Fatalf("want numeric Shodan IP candidate, got %+v", real)
 	}
 }
 
@@ -285,6 +376,27 @@ func TestRealFetchFavicon_HTTPSHappy(t *testing.T) {
 	}
 }
 
+func TestRealFetchFavicon_HTMLIconLink(t *testing.T) {
+	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
+		"https://example.test/": func(*http.Request) (*http.Response, error) {
+			return stubResponse(200, `<html><head><link rel="shortcut icon" href="/assets/site.ico"></head></html>`), nil
+		},
+		"https://example.test/assets/site.ico": func(*http.Request) (*http.Response, error) {
+			return stubResponse(200, "LINKICON"), nil
+		},
+		"https://example.test/favicon.ico": func(*http.Request) (*http.Response, error) {
+			return stubResponse(404, "not here"), nil
+		},
+	})
+	raw, err := realFetchFavicon(context.Background(), "example.test", hc)
+	if err != nil {
+		t.Fatalf("realFetchFavicon: %v", err)
+	}
+	if string(raw) != "LINKICON" {
+		t.Errorf("body: got %q", string(raw))
+	}
+}
+
 func TestRealFetchFavicon_404_NoBody(t *testing.T) {
 	hc, _ := stubClient(map[string]func(*http.Request) (*http.Response, error){
 		"https://example.test/favicon.ico": func(*http.Request) (*http.Response, error) {
@@ -316,4 +428,17 @@ func TestRealFetchFavicon_HTTPSFails_HTTPFallback(t *testing.T) {
 	if string(raw) != "PLAINICON" {
 		t.Errorf("fallback body: got %q", string(raw))
 	}
+}
+
+func realFaviconCandidates(candidates []Candidate) []Candidate {
+	var out []Candidate
+	for _, c := range candidates {
+		if c.Metadata != nil {
+			if _, ok := c.Metadata["diagnostic"]; ok {
+				continue
+			}
+		}
+		out = append(out, c)
+	}
+	return out
 }

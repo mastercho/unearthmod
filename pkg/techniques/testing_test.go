@@ -93,10 +93,16 @@ func (s *stubRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	s.mu.Lock()
 	s.calls = append(s.calls, req.URL.String())
 	s.mu.Unlock()
+	var bestPrefix string
+	var bestFn func(r *http.Request) (*http.Response, error)
 	for prefix, fn := range s.routes {
-		if strings.HasPrefix(req.URL.String(), prefix) {
-			return fn(req)
+		if strings.HasPrefix(req.URL.String(), prefix) && len(prefix) > len(bestPrefix) {
+			bestPrefix = prefix
+			bestFn = fn
 		}
+	}
+	if bestFn != nil {
+		return bestFn(req)
 	}
 	return &http.Response{
 		StatusCode: http.StatusNotFound,

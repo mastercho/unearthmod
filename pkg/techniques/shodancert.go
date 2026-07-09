@@ -49,11 +49,14 @@ func (shodanCertTechnique) DefaultWeight() float64 { return 0.85 }
 
 // shodanSearchResponse is the subset of /shodan/host/search we read.
 type shodanSearchResponse struct {
-	Matches []struct {
-		IPStr string `json:"ip_str"`
-	} `json:"matches"`
-	Total int    `json:"total"`
-	Error string `json:"error,omitempty"`
+	Matches []shodanSearchMatch `json:"matches"`
+	Total   int                 `json:"total"`
+	Error   string              `json:"error,omitempty"`
+}
+
+type shodanSearchMatch struct {
+	IPStr string `json:"ip_str"`
+	IP    any    `json:"ip,omitempty"`
 }
 
 func (shodanCertTechnique) Run(ctx context.Context, target string, opts RunOptions) ([]Candidate, error) {
@@ -66,7 +69,7 @@ func (shodanCertTechnique) Run(ctx context.Context, target string, opts RunOptio
 		return nil, fmt.Errorf("shodan_cert fingerprint: %w", err)
 	}
 
-	key := cache.Key("shodan_cert", target, map[string]string{"fp": fp})
+	key := cache.Key("shodan_cert", target, map[string]string{"fp": fp, "schema": "v2"})
 	var cached shodanSearchResponse
 	if data, ok := cacheRead(opts.Cache, opts, key); ok {
 		if jerr := json.Unmarshal(data, &cached); jerr == nil {
@@ -161,8 +164,8 @@ func shodanCandidates(doc shodanSearchResponse, target, fp string) []Candidate {
 	seen := map[netip.Addr]bool{}
 	var out []Candidate
 	for _, m := range doc.Matches {
-		a, err := netip.ParseAddr(m.IPStr)
-		if err != nil {
+		a, ok := shodanMatchAddr(m)
+		if !ok {
 			continue
 		}
 		a = a.Unmap()
@@ -179,4 +182,50 @@ func shodanCandidates(doc shodanSearchResponse, target, fp string) []Candidate {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].IP < out[j].IP })
 	return out
+}
+
+func shodanMatchAddr(m shodanSearchMatch) (netip.Addr, bool) {
+	if m.IPStr != "" {
+		if a, err := netip.ParseAddr(m.IPStr); err == nil {
+			return a, true
+		}
+	}
+	n, ok := shodanNumericIP(m.IP)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	return netip.AddrFrom4([4]byte{
+		byte(n >> 24),
+		byte(n >> 16),
+		byte(n >> 8),
+		byte(n),
+	}), true
+}
+
+func shodanNumericIP(v any) (uint32, bool) {
+	switch n := v.(type) {
+	case float64:
+		if n < 0 || n > float64(^uint32(0)) {
+			return 0, false
+		}
+		return uint32(n), true
+	case int:
+		if n < 0 {
+			return 0, false
+		}
+		return uint32(n), true
+	case int64:
+		if n < 0 || n > int64(^uint32(0)) {
+			return 0, false
+		}
+		return uint32(n), true
+	case json.Number:
+		i, err := n.Int64()
+		if err != nil || i < 0 || i > int64(^uint32(0)) {
+			return 0, false
+		}
+		return uint32(i), true
+	default:
+		return 0, false
+	}
 }
