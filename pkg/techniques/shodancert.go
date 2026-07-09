@@ -55,8 +55,11 @@ type shodanSearchResponse struct {
 }
 
 type shodanSearchMatch struct {
-	IPStr string `json:"ip_str"`
-	IP    any    `json:"ip,omitempty"`
+	IPStr     string   `json:"ip_str"`
+	IP        any      `json:"ip,omitempty"`
+	Hostnames []string `json:"hostnames,omitempty"`
+	Port      int      `json:"port,omitempty"`
+	Product   string   `json:"product,omitempty"`
 }
 
 func (shodanCertTechnique) Run(ctx context.Context, target string, opts RunOptions) ([]Candidate, error) {

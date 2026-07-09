@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.13] — 2026-07-09
+
+### Added
+
+- Added `shodan_host`, a generic Shodan hostname-inventory discovery technique that queries `hostname:<target>` (and the bare domain for `www` targets) so Shodan-origin hits like `5.226.140.251` enter the `host_header` validation pool even when favicon and certificate pivots are empty.
+
 ## [1.0.12] — 2026-07-09
 
 ### Fixed

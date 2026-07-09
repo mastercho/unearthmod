@@ -363,6 +363,20 @@ Active techniques make direct TCP/HTTP connections to *candidate IPs*, not to th
 
 ---
 
+### `shodan_host`
+
+**Tier:** Passive | **Weight:** 0.72 | **API key:** `SHODAN_API_KEY`
+
+**What it does:** Queries Shodan's host-search API for `hostname:<target>` and, when the target starts with `www.`, also the bare domain. Every non-CDN IP Shodan has indexed under those hostnames becomes an origin candidate for phase-2 validation.
+
+**Why it complements cert and favicon pivots:** `shodan_cert` only finds hosts reusing the current front-door certificate, and `favicon_hash` only finds hosts sharing a fetched favicon. `shodan_host` is the generic Shodan hostname inventory source: it can surface an origin that Shodan saw serving the target hostname even when the cert and favicon pivots are empty.
+
+**Data source:** Shodan API (`https://api.shodan.io/shodan/host/search`) with the `hostname:` filter.
+
+**Limitations:** Shodan search coverage depends on their crawler and account tier. Hostname inventory is a candidate source, not confirmation; `host_header` still needs to verify that the IP serves matching content before the result is marked confirmed.
+
+---
+
 ### `favicon_hash`
 
 **Tier:** Active | **Weight:** 0.75 | **API key:** `SHODAN_API_KEY` or `CENSYS_PLATFORM_PAT` (either is sufficient)

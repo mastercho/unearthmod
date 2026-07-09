@@ -708,6 +708,8 @@ func hasKeyFor(name string, k techniques.APIKeys) bool {
 		return k.SecurityTrailsKey != "" || k.ViewDNSKey != ""
 	case "shodan_cert":
 		return k.ShodanAPIKey != ""
+	case "shodan_host":
+		return k.ShodanAPIKey != ""
 	case "shodan_cve":
 		return k.ShodanAPIKey != ""
 	case "fofa_cert":

@@ -31,6 +31,7 @@ var knownTechniques = map[string]struct{}{
 	"censys_cert":           {},
 	"censys_ipv6":           {},
 	"shodan_cert":           {},
+	"shodan_host":           {},
 	"fofa_cert":             {},
 	"netlas_cert":           {},
 	"criminalip_asset":      {},
