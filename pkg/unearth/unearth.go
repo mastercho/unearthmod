@@ -80,6 +80,7 @@ type Validation struct {
 	URL         string  `json:"url,omitempty"`
 	Scheme      string  `json:"scheme,omitempty"`
 	Port        int     `json:"port,omitempty"`
+	StatusCode  int     `json:"status_code,omitempty"`
 	Score       float64 `json:"score"`
 	HTMLScore   float64 `json:"html_score,omitempty"`
 	CertScore   float64 `json:"cert_score,omitempty"`
@@ -628,6 +629,7 @@ func validationFromMetadata(md map[string]any) *Validation {
 		URL:         metaString(m, "url"),
 		Scheme:      metaString(m, "scheme"),
 		Port:        metaInt(m, "port"),
+		StatusCode:  metaInt(m, "status_code"),
 		Score:       metaFloat(m, "score"),
 		HTMLScore:   metaFloat(m, "html_score"),
 		CertScore:   metaFloat(m, "cert_score"),

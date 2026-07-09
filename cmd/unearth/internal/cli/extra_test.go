@@ -55,7 +55,19 @@ func TestVerbose_EmitsResultMetaOnStderrForJSONL(t *testing.T) {
 		r.Warnings = []string{"w1"}
 		r.Errors = []unearth.TechniqueErr{{Technique: "t", Err: "e", Reason: "missing_api_key"}}
 		r.TechniqueRuns = []unearth.TechniqueRun{{Technique: "phpinfo_scan", Status: "ok", Candidates: 0}}
-		r.Candidates[0].Validation = &unearth.Validation{Status: "confirmed", Technique: "host_header", Score: 0.82}
+		r.Candidates[0].Validation = &unearth.Validation{
+			Status:      "confirmed",
+			Technique:   "host_header",
+			Method:      "host_header",
+			URL:         "https://203.0.113.1:443/",
+			Scheme:      "https",
+			Port:        443,
+			StatusCode:  200,
+			Score:       0.82,
+			HTMLScore:   0.74,
+			CertScore:   1,
+			HeaderScore: 0.33,
+		}
 		return r, nil
 	})
 	code, stdout, stderr := captured(t, "--verbose", "example.test")
@@ -69,8 +81,24 @@ func TestVerbose_EmitsResultMetaOnStderrForJSONL(t *testing.T) {
 	if strings.Contains(stdout, "warn:") || strings.Contains(stdout, "CDN:") {
 		t.Errorf("stdout should not carry result metadata: %q", stdout)
 	}
-	// stderr should mention CDN, run summary, confirmation, warning, and error reason.
-	for _, want := range []string{"CDN: cloudflare", "run[phpinfo_scan]", "candidates=0", "confirmed[203.0.113.1]", "host_header", "warn:", "missing_api_key"} {
+	// stderr should mention CDN, run summary, confirmation, warning, error reason,
+	// and the final human origin block.
+	for _, want := range []string{
+		"CDN: cloudflare",
+		"run[phpinfo_scan]",
+		"candidates=0",
+		"confirmed[203.0.113.1]",
+		"host_header",
+		"warn:",
+		"missing_api_key",
+		"POSSIBLE WAF BYPASS FOUND",
+		"IP:           203.0.113.1",
+		"Port:         443",
+		"Method:       host_header",
+		"Overall:      82.0%",
+		"Status:       200",
+		`Verify:       curl -sk -H "Host: example.test" https://203.0.113.1:443/`,
+	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}

@@ -313,6 +313,7 @@ func TestDiscover_PreservesValidationMetadata(t *testing.T) {
 						"url":          "https://203.0.113.88:443/",
 						"scheme":       "https",
 						"port":         443,
+						"status_code":  200,
 						"score":        0.82,
 						"html_score":   0.74,
 						"cert_score":   1.0,
@@ -335,7 +336,7 @@ func TestDiscover_PreservesValidationMetadata(t *testing.T) {
 		t.Fatalf("Status = %q, want confirmed", res.Candidates[0].Status)
 	}
 	v := res.Candidates[0].Validation
-	if v == nil || v.Status != "confirmed" || v.Technique != "host_header" || v.Port != 443 {
+	if v == nil || v.Status != "confirmed" || v.Technique != "host_header" || v.Port != 443 || v.StatusCode != 200 {
 		t.Fatalf("validation not preserved: %+v", v)
 	}
 	if v.Score != 0.82 || v.HTMLScore != 0.74 || v.CertScore != 1.0 || v.HeaderScore != 0.33 || !v.TitleMatch {

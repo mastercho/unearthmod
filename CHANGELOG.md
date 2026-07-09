@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.14] — 2026-07-09
+
+### Added
+
+- Added an `unwaf`-style end-of-run verbose summary for confirmed origins, including IP, port, method, score components, HTTP status, source techniques, and a ready-to-run `curl -H "Host: ..."` verification command.
+
 ## [1.0.13] — 2026-07-09
 
 ### Added

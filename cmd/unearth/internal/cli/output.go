@@ -207,6 +207,7 @@ func emitResultMeta(w io.Writer, res *unearth.Result) {
 	for _, ww := range res.Warnings {
 		_, _ = fmt.Fprintf(w, "unearth: %s — warn: %s\n", res.Target, ww)
 	}
+	emitConfirmedOriginSummary(w, res)
 }
 
 func emitTechniqueDiagnostic(w io.Writer, target, technique string, d unearth.TechniqueDiagnostic) {
@@ -227,6 +228,96 @@ func emitTechniqueDiagnostic(w io.Writer, target, technique string, d unearth.Te
 func hasConfirmedCandidate(candidates []unearth.ScoredIP) bool {
 	for _, c := range candidates {
 		if c.Validation != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func emitConfirmedOriginSummary(w io.Writer, res *unearth.Result) {
+	confirmed := confirmedCandidates(res.Candidates)
+	if len(confirmed) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "── Results ─────────────────────────────────────────────────────")
+	for i, c := range confirmed {
+		if i > 0 {
+			_, _ = fmt.Fprintln(w, "")
+		}
+		v := c.Validation
+		_, _ = fmt.Fprintln(w, "✓ POSSIBLE WAF BYPASS FOUND")
+		_, _ = fmt.Fprintf(w, "IP:           %s\n", c.IP)
+		if v.Port != 0 {
+			_, _ = fmt.Fprintf(w, "Port:         %d\n", v.Port)
+		}
+		if v.Method != "" {
+			_, _ = fmt.Fprintf(w, "Method:       %s\n", v.Method)
+		}
+		if v.Score > 0 {
+			_, _ = fmt.Fprintf(w, "Overall:      %.1f%%\n", v.Score*100)
+		}
+		_, _ = fmt.Fprintf(w, "  HTML sim:   %.1f%%\n", v.HTMLScore*100)
+		_, _ = fmt.Fprintf(w, "  Cert match: %.1f%%\n", v.CertScore*100)
+		_, _ = fmt.Fprintf(w, "  Header:     %.1f%%\n", v.HeaderScore*100)
+		if v.StatusCode != 0 {
+			_, _ = fmt.Fprintf(w, "Status:       %d\n", v.StatusCode)
+		}
+		if sources := originSummarySources(c); sources != "" {
+			_, _ = fmt.Fprintf(w, "Source:       %s\n", sources)
+		}
+		if verify := originVerifyCommand(res.Target, c.IP, v); verify != "" {
+			_, _ = fmt.Fprintf(w, "Verify:       %s\n", verify)
+		}
+	}
+}
+
+func confirmedCandidates(candidates []unearth.ScoredIP) []unearth.ScoredIP {
+	var out []unearth.ScoredIP
+	for _, c := range candidates {
+		if c.Validation != nil {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func originSummarySources(c unearth.ScoredIP) string {
+	var sources []string
+	for _, h := range c.Techniques {
+		if h.Name == "" || h.Name == "host_header" {
+			continue
+		}
+		if !containsString(sources, h.Name) {
+			sources = append(sources, h.Name)
+		}
+	}
+	if len(sources) == 0 && c.Validation != nil && c.Validation.Technique != "" {
+		sources = append(sources, c.Validation.Technique)
+	}
+	return strings.Join(sources, ", ")
+}
+
+func originVerifyCommand(target, ip string, v *unearth.Validation) string {
+	if v == nil {
+		return ""
+	}
+	u := v.URL
+	if u == "" && v.Scheme != "" && v.Port != 0 {
+		u = fmt.Sprintf("%s://%s:%d/", v.Scheme, ip, v.Port)
+	}
+	if u == "" {
+		return ""
+	}
+	if v.Method == "host_header" {
+		return fmt.Sprintf("curl -sk -H %q %s", "Host: "+target, u)
+	}
+	return "curl -sk " + u
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
 			return true
 		}
 	}
