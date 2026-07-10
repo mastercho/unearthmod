@@ -45,6 +45,7 @@ var knownTechniques = map[string]struct{}{
 	"otx_passivedns":        {},
 	"greynoise_asset":       {},
 	"host_header":           {},
+	"neighbor_scan":         {},
 	"banner_grab":           {},
 	"error_page":            {},
 	"phpinfo_scan":          {},

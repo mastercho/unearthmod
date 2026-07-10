@@ -51,6 +51,10 @@ type Options struct {
 	// CVEID optionally scopes the shodan_cve technique to a single CVE
 	// identifier (e.g. "CVE-2024-1709"). Empty string skips that technique.
 	CVEID string
+	// DisableNeighborScan disables the default active neighbor_scan phase that
+	// probes /24 neighbors of already-confirmed origins. Passive runs never
+	// select neighbor_scan, regardless of this setting.
+	DisableNeighborScan bool
 }
 
 // DefaultOptions returns Options with conservative defaults: passive tier only,
@@ -235,14 +239,21 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 		CVEID:       opts.CVEID,
 	}
 
-	// Select techniques, filter for missing keys, split into the
-	// two execution phases described in Packet 5A §6: producers run
-	// first in parallel; consumers (techniques that implement
-	// techniques.CandidateConsumer and opt in) run second with the
-	// pooled candidate IPs from phase 1 in RunOptions.SeedIPs.
+	// Select techniques, filter for missing keys, split into phases:
+	// producers run first, normal candidate consumers validate the pooled
+	// phase-1 candidates second, and confirmed-candidate consumers run last
+	// with only actively validated origin IPs.
 	selected := techniqueSelector(opts.Tier)
-	var phase1, phase2 []techniques.Technique
+	var phase1, phase2, phase3 []techniques.Technique
 	for _, t := range selected {
+		if opts.DisableNeighborScan && t.Name() == "neighbor_scan" {
+			result.TechniqueRuns = append(result.TechniqueRuns, TechniqueRun{
+				Technique: t.Name(),
+				Status:    "skipped",
+				Reason:    "disabled",
+			})
+			continue
+		}
 		if t.RequiresAPIKey() && !hasKeyFor(t.Name(), opts.APIKeys) {
 			result.Errors = append(result.Errors, TechniqueErr{
 				Technique: t.Name(),
@@ -256,7 +267,9 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 			})
 			continue
 		}
-		if cc, ok := t.(techniques.CandidateConsumer); ok && cc.ConsumesCandidates() {
+		if cc, ok := t.(techniques.ConfirmedCandidateConsumer); ok && cc.ConsumesConfirmedCandidates() {
+			phase3 = append(phase3, t)
+		} else if cc, ok := t.(techniques.CandidateConsumer); ok && cc.ConsumesCandidates() {
 			phase2 = append(phase2, t)
 		} else {
 			phase1 = append(phase1, t)
@@ -332,6 +345,17 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 		phase2Opts.SeedIPs = seeds
 		phase2Results := runBatch(overallCtx, phase2, target, phase2Opts, opts)
 		foldResults(phase2Results)
+	}
+
+	// Phase 3: confirmed-candidate consumers, e.g. neighbor_scan. These run
+	// only from actively validated origins, avoiding /24 probes around weak
+	// passive-only guesses.
+	if len(phase3) > 0 {
+		seeds := collectConfirmedSeedIPs(groups)
+		phase3Opts := runOpts
+		phase3Opts.SeedIPs = seeds
+		phase3Results := runBatch(overallCtx, phase3, target, phase3Opts, opts)
+		foldResults(phase3Results)
 	}
 
 	// Score and finalize.
@@ -528,6 +552,22 @@ func techniqueTimeout(t techniques.Technique, defaultTimeout time.Duration) time
 func collectSeedIPs(groups map[string]*ScoredIP) []netip.Addr {
 	seeds := make([]netip.Addr, 0, len(groups))
 	for ipStr := range groups {
+		a, err := netip.ParseAddr(ipStr)
+		if err != nil {
+			continue
+		}
+		seeds = append(seeds, a)
+	}
+	sort.Slice(seeds, func(i, j int) bool { return seeds[i].Less(seeds[j]) })
+	return seeds
+}
+
+func collectConfirmedSeedIPs(groups map[string]*ScoredIP) []netip.Addr {
+	seeds := make([]netip.Addr, 0, len(groups))
+	for ipStr, g := range groups {
+		if g.Validation == nil {
+			continue
+		}
 		a, err := netip.ParseAddr(ipStr)
 		if err != nil {
 			continue

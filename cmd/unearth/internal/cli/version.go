@@ -23,7 +23,7 @@ func newVersionCmd(stdout io.Writer) *cobra.Command {
 
 func printVersion(w io.Writer) {
 	commit, buildDate := vcsInfo()
-	_, _ = fmt.Fprintf(w, "unearth %s\n", httpclient.Version)
+	_, _ = fmt.Fprintf(w, "unearth MTH Mod %s\n", httpclient.Version)
 	if commit != "" {
 		_, _ = fmt.Fprintf(w, "commit:  %s\n", commit)
 	}

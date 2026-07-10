@@ -258,6 +258,16 @@ type CandidateConsumer interface {
 	ConsumesCandidates() bool
 }
 
+// ConfirmedCandidateConsumer is an optional interface for active techniques
+// that should run after the normal candidate consumers have had a chance to
+// confirm origins. The engine seeds these techniques only with candidates that
+// already carry validation metadata, which keeps expensive expansion techniques
+// from probing neighborhoods around weak one-source guesses.
+type ConfirmedCandidateConsumer interface {
+	Technique
+	ConsumesConfirmedCandidates() bool
+}
+
 // RunOptions carries everything a technique needs to execute a single run.
 type RunOptions struct {
 	// HTTPClient is the shared client techniques should use for HTTP work.

@@ -21,6 +21,7 @@ weights:
   otx_passivedns: 0.64
   greynoise_asset: 0.65
   host_header: 0.85
+  neighbor_scan: 0.78
   banner_grab: 0.45
   error_page: 0.60
   phpinfo_scan: 0.74

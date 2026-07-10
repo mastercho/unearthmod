@@ -76,6 +76,7 @@ The default (`passive`) never touches the target. `--active` and `--aggressive` 
 | `censys_ipv6` | Passive | Yes — `CENSYS_PLATFORM_PAT` | 0.78 | Censys Platform IPv6 asset-discovery — pivots on the target apex via `host.dns.names` and emits only non-CDN IPv6 hits, catching dual-stack AAAA-leak origins that never reused the front-door certificate and so escape `censys_cert` |
 | `dns_history` | Passive | Yes — `SECURITYTRAILS_API_KEY` or `VIEWDNS_API_KEY` | 0.65 | Historical DNS A/AAAA records |
 | `host_header` | Active | No | 0.85 | HTTP origin confirmation: fetches the baseline with a Chrome-like uTLS/HTTP2 client, probes candidate IPs on HTTP/HTTPS using direct-IP access and `Host: target` with target SNI, then confirms matches using HTML/text similarity, TLS certificate overlap, headers, and status scoring |
+| `neighbor_scan` | Active | No | 0.78 | Unwaf-style neighbor expansion: after an origin is confirmed, scans the confirmed IP's `/24` neighbors and validates matching nearby hosts with the same host-header scoring; enabled by default in active/aggressive mode |
 | `banner_grab` | Active | No | 0.45 | SSH and HTTP banner fingerprinting of candidate IPs |
 | `shodan_cert` | Active | Yes — `SHODAN_API_KEY` | 0.85 | Shodan certificate-fingerprint search |
 | `shodan_host` | Passive | Yes — `SHODAN_API_KEY` | 0.72 | Shodan hostname inventory search — asks Shodan for hosts indexed under `hostname:<target>` and, for `www` targets, the bare domain too; emits non-CDN IPs so `host_header` can verify them |
@@ -106,7 +107,7 @@ See [docs/techniques.md](docs/techniques.md) for detailed descriptions of each t
 
 ## API keys
 
-`unearth` is fully usable with zero API keys. The keyless passive techniques (`ct_fingerprint`, `crtsh`, `spf_mx`, `subdomain_enum`, `split_dns`, `email_header`, `otx_passivedns`) plus keyless active techniques (`host_header`, `asn_sweep`, `jarm_fingerprint`) cover the common case. API keys extend coverage with higher-confidence keyed sources.
+`unearth` is fully usable with zero API keys. The keyless passive techniques (`ct_fingerprint`, `crtsh`, `spf_mx`, `subdomain_enum`, `split_dns`, `email_header`, `otx_passivedns`) plus keyless active techniques (`host_header`, `neighbor_scan`, `asn_sweep`, `jarm_fingerprint`) cover the common case. API keys extend coverage with higher-confidence keyed sources.
 
 Copy `.env.example` to `.env`, then fill in only the credentials you want to use:
 
@@ -227,6 +228,7 @@ Flags:
       --weights string      Path to technique-weight overrides YAML
       --email-file string   Path to a raw email (.eml); its Received: headers are mined for origin IPs
       --cve string          CVE id (e.g. CVE-2024-1709) that scopes the shodan_cve technique to hosts under the target apex affected by that CVE
+      --scan-neighbors      Scan /24 neighbors of confirmed origins in active/aggressive mode (default true)
       --pipeline-batch int  Targets to discover concurrently in list/stdin mode (default 1 = sequential)
       --verbose             Print per-technique results to stderr
       --silent              Suppress all stderr output

@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.15] — 2026-07-10
+
+### Added
+
+- Added default active `neighbor_scan` behavior inspired by `unwaf --scan-neighbors`: after an origin is confirmed, Unearth scans that IP's `/24` neighbors and validates matches with host-header scoring. Use `--scan-neighbors=false` to disable it.
+- Updated `unearth version` output to show the fork branding as `unearth MTH Mod <version>`.
+
 ## [1.0.14] — 2026-07-09
 
 ### Added

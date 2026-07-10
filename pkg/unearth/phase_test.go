@@ -39,6 +39,29 @@ func (c *consumerFake) Run(ctx context.Context, target string, opts techniques.R
 	return out, nil
 }
 
+// confirmedConsumerFake runs after normal candidate consumers and should see
+// only IPs that phase 2 marked as confirmed.
+type confirmedConsumerFake struct {
+	fakeTech
+	consumes bool
+	seen     []netip.Addr
+	emits    string
+}
+
+func (c *confirmedConsumerFake) ConsumesConfirmedCandidates() bool { return c.consumes }
+
+func (c *confirmedConsumerFake) Run(ctx context.Context, target string, opts techniques.RunOptions) ([]techniques.Candidate, error) {
+	c.seen = append([]netip.Addr(nil), opts.SeedIPs...)
+	out, err := c.fakeTech.Run(ctx, target, opts)
+	if err != nil {
+		return out, err
+	}
+	if c.emits != "" {
+		out = append(out, techniques.Candidate{IP: c.emits, Evidence: "confirmed-consumer-evidence"})
+	}
+	return out, nil
+}
+
 func TestDiscover_TwoPhaseConsumerSeesProducerIPs(t *testing.T) {
 	producer := &fakeTech{
 		name: "producer", weight: 0.5, tier: techniques.TierPassive,
@@ -84,6 +107,87 @@ func TestDiscover_TwoPhaseConsumerSeesProducerIPs(t *testing.T) {
 	}
 	if !gotConsumerIP {
 		t.Errorf("consumer's own candidate missing from result: %+v", res.Candidates)
+	}
+}
+
+func TestDiscover_ConfirmedConsumerSeesOnlyValidatedIPs(t *testing.T) {
+	producer := &fakeTech{
+		name: "producer", weight: 0.5, tier: techniques.TierPassive,
+		candidates: []techniques.Candidate{
+			{IP: "203.0.113.10", Evidence: "candidate"},
+			{IP: "203.0.113.11", Evidence: "will-confirm"},
+		},
+	}
+	validator := &consumerFake{
+		fakeTech: fakeTech{
+			name: "host_header", weight: 0.85, tier: techniques.TierActive,
+			candidates: []techniques.Candidate{{
+				IP:       "203.0.113.11",
+				Evidence: "confirmed",
+				Metadata: map[string]any{"validation": map[string]any{
+					"status":    "confirmed",
+					"technique": "host_header",
+					"score":     0.82,
+				}},
+			}},
+		},
+		consumes: true,
+	}
+	confirmed := &confirmedConsumerFake{
+		fakeTech: fakeTech{name: "neighbor_scan", weight: 0.78, tier: techniques.TierActive},
+		consumes: true,
+		emits:    "203.0.113.12",
+	}
+	withSelector(t, producer, validator, confirmed)
+
+	opts := testOpts()
+	opts.Tier = techniques.TierActive
+	res, err := Discover(context.Background(), "example.test", opts)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(confirmed.seen) != 1 || confirmed.seen[0] != netip.MustParseAddr("203.0.113.11") {
+		t.Fatalf("confirmed consumer seeds = %v, want only 203.0.113.11", confirmed.seen)
+	}
+	found := false
+	for _, c := range res.Candidates {
+		if c.IP == "203.0.113.12" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("confirmed consumer output missing: %+v", res.Candidates)
+	}
+}
+
+func TestDiscover_DisableNeighborScanSkipsTechnique(t *testing.T) {
+	neighbor := &confirmedConsumerFake{
+		fakeTech: fakeTech{name: "neighbor_scan", weight: 0.78, tier: techniques.TierActive},
+		consumes: true,
+		emits:    "203.0.113.12",
+	}
+	withSelector(t,
+		&fakeTech{name: "p", weight: 0.5, candidates: []techniques.Candidate{{IP: "203.0.113.11"}}},
+		neighbor,
+	)
+	opts := testOpts()
+	opts.Tier = techniques.TierActive
+	opts.DisableNeighborScan = true
+	res, err := Discover(context.Background(), "example.test", opts)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if neighbor.ranOnce.Load() != 0 {
+		t.Fatal("neighbor_scan should not run when disabled")
+	}
+	foundSkip := false
+	for _, r := range res.TechniqueRuns {
+		if r.Technique == "neighbor_scan" && r.Status == "skipped" && r.Reason == "disabled" {
+			foundSkip = true
+		}
+	}
+	if !foundSkip {
+		t.Fatalf("disabled neighbor_scan run not recorded: %+v", res.TechniqueRuns)
 	}
 }
 

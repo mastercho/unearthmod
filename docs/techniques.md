@@ -339,6 +339,18 @@ Active techniques make direct TCP/HTTP connections to *candidate IPs*, not to th
 
 ---
 
+### `neighbor_scan`
+
+**Tier:** Active | **Weight:** 0.78 | **API key:** None
+
+**What it does:** Mirrors `unwaf --scan-neighbors`. After the normal active validators have confirmed at least one origin, this technique expands each confirmed IPv4 to its `/24`, skips the confirmed seed itself plus reserved/CDN addresses, and probes the neighboring hosts with the same Chrome-like host-header verifier used by `host_header`. Matching neighbors are returned as confirmed candidates with `validation.technique="neighbor_scan"` and a `host_header_neighbor` or `direct_neighbor` method.
+
+**Phase-3 confirmed consumer:** Unlike normal phase-2 consumers, `neighbor_scan` receives only actively confirmed origins as seeds. It does not scan around weak passive-only guesses. The CLI enables it by default in `--active` and `--aggressive` runs; use `--scan-neighbors=false` to disable it for strict scope or speed.
+
+**Limitations:** IPv4-only by design because the behavior is `/24` neighbor scanning. A confirmed origin on a large multi-tenant provider can produce noisy neighboring hosts, so matches still require the normal HTML/TLS/header score threshold before being marked confirmed. The technique can add runtime because it may probe up to 253 nearby addresses per confirmed `/24`.
+
+---
+
 ### `banner_grab`
 
 **Tier:** Active | **Weight:** 0.45 | **API key:** None

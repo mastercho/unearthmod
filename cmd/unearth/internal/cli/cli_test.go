@@ -383,8 +383,33 @@ func TestVersionCmd(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if !strings.Contains(stdout, "unearth ") {
-		t.Errorf("version output should start with 'unearth ': %q", stdout)
+	if !strings.Contains(stdout, "unearth MTH Mod ") {
+		t.Errorf("version output should include MTH Mod branding: %q", stdout)
+	}
+}
+
+func TestRoot_ScanNeighborsDefaultEnabledAndCanDisable(t *testing.T) {
+	var got []bool
+	withRunner(t, func(_ context.Context, target string, opts unearth.Options) (*unearth.Result, error) {
+		got = append(got, opts.DisableNeighborScan)
+		return fakeResult(target, "203.0.113.1"), nil
+	})
+	code, _, _ := captured(t, "--active", "example.test")
+	if code != 0 {
+		t.Fatalf("default run exit %d", code)
+	}
+	code, _, _ = captured(t, "--active", "--scan-neighbors=false", "example.test")
+	if code != 0 {
+		t.Fatalf("disabled run exit %d", code)
+	}
+	if len(got) != 2 {
+		t.Fatalf("runner calls = %d, want 2", len(got))
+	}
+	if got[0] {
+		t.Fatal("neighbor scan should be enabled by default")
+	}
+	if !got[1] {
+		t.Fatal("--scan-neighbors=false should disable neighbor scan")
 	}
 }
 
