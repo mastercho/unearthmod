@@ -1,13 +1,21 @@
-# unearth
+# unearthmod - MTH MOD
 
-[![CI](https://github.com/bugsyhewitt/unearth/actions/workflows/ci.yml/badge.svg)](https://github.com/bugsyhewitt/unearth/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/bugsyhewitt/unearth)](https://github.com/bugsyhewitt/unearth/releases/latest)
+[![CI](https://github.com/mastercho/unearthmod/actions/workflows/ci.yml/badge.svg)](https://github.com/mastercho/unearthmod/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/mastercho/unearthmod)](https://github.com/mastercho/unearthmod/releases/latest)
 [![Go version](https://img.shields.io/badge/go-1.24+-00ADD8)](https://go.dev)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **Unearth the real origin server hiding behind a CDN.**
 
-**MTH mod of Unearth** — this fork adds extra origin-discovery backends, `.env` credential loading, noisier-provider hardening, and active origin-confirmation improvements.
+**MTH MOD of Unearth** — this fork adds extra origin-discovery backends, `.env` credential loading, noisier-provider hardening, active origin-confirmation improvements, and `unwaf`-style confirmed-origin output.
+
+## Latest MTH MOD Changes
+
+- `unearth version` prints `unearth MTH Mod <version>`.
+- Confirmed origins are shown at the end in an `unwaf`-style `POSSIBLE WAF BYPASS FOUND` block with a ready-to-run `curl -H "Host: ..."` verification command.
+- `shodan_host` adds generic Shodan hostname inventory discovery so Shodan-origin hits can enter validation even when favicon/cert pivots are empty.
+- `neighbor_scan` is enabled by default in `--active` / `--aggressive`: after an origin is confirmed, Unearth scans that origin's `/24` neighbors and validates matches with host-header scoring. Disable with `--scan-neighbors=false`.
+- `spf_mx` now checks the registrable apex for hostname targets, so `www.example.com` can still pick up SPF origins from `example.com`; it also accepts qualified SPF mechanisms like `+ip4:104.223.9.26`.
 
 `unearth` discovers origin IPs by running multiple recon techniques in parallel — certificate transparency pivots, DNS history, SPF/MX analysis, subdomain enumeration, email `Received:`-header mining, exposure probes, and more — then ranks candidate IPs by how many techniques independently agree. The result is a scored list of origin candidates, from most to least confident.
 
