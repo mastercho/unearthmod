@@ -42,6 +42,52 @@ func TestSPFMX_Run_AllMechanisms(t *testing.T) {
 	}
 }
 
+func TestSPFMX_Run_UsesApexAndAcceptsQualifiedMechanisms(t *testing.T) {
+	fr := newFakeResolver()
+	fr.TXT = map[string][]string{
+		"gaytell.com": {"v=spf1 +ip4:104.223.9.26 +a +mx +ip4:104.223.9.141 ~all"},
+	}
+	fr.A = map[string][]string{
+		"gaytell.com":      {"104.223.9.26"},
+		"mail.gaytell.com": {"104.223.9.199"},
+	}
+	fr.MX = map[string][]string{
+		"gaytell.com": {"mail.gaytell.com"},
+	}
+	withFakeResolver(t, fr)
+
+	out, err := spfMXTechnique{}.Run(context.Background(), "www.gaytell.com", RunOptions{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	ips := map[string]bool{}
+	for _, c := range out {
+		ips[c.IP] = true
+	}
+	for _, want := range []string{"104.223.9.26", "104.223.9.141", "104.223.9.199"} {
+		if !ips[want] {
+			t.Errorf("missing qualified apex SPF/MX IP %s in %+v", want, out)
+		}
+	}
+}
+
+func TestSPFLookupHosts(t *testing.T) {
+	tests := []struct {
+		target string
+		want   []string
+	}{
+		{target: "www.example.com", want: []string{"example.com", "www.example.com"}},
+		{target: "https://shop.example.co.uk:443/path", want: []string{"example.co.uk", "shop.example.co.uk"}},
+		{target: "example.test", want: []string{"example.test"}},
+	}
+	for _, tt := range tests {
+		got := spfLookupHosts(tt.target)
+		if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+			t.Errorf("spfLookupHosts(%q) = %v, want %v", tt.target, got, tt.want)
+		}
+	}
+}
+
 func TestSPFMX_Run_IgnoresNonSPFTXT(t *testing.T) {
 	fr := newFakeResolver()
 	fr.TXT = map[string][]string{

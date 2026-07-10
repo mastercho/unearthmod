@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.16] — 2026-07-10
+
+### Fixed
+
+- Fixed `spf_mx` discovery for hostname targets such as `www.gaytell.com` by querying the registrable apex first and accepting SPF mechanism qualifiers (`+`, `-`, `~`, `?`). This allows records such as `+ip4:104.223.9.26` to enter active origin validation.
+- Made verbose neighbor-scan status explicit: it now reports `no_confirmed_candidates` when no validated seed exists, or emits a summary with the number of neighboring addresses scanned and confirmed.
+
 ## [1.0.15] — 2026-07-10
 
 ### Added

@@ -51,21 +51,30 @@ func TestNeighborScanConfirmsMatchingNeighbor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(out) != 1 || out[0].IP != "203.0.113.51" {
+	var matches []Candidate
+	for _, c := range out {
+		if c.IP != "" {
+			matches = append(matches, c)
+		}
+	}
+	if len(matches) != 1 || matches[0].IP != "203.0.113.51" {
 		t.Fatalf("expected matching neighbor .51, got %+v", out)
 	}
-	if !strings.Contains(out[0].Evidence, "neighbor_scan") {
-		t.Fatalf("evidence should mention neighbor_scan: %q", out[0].Evidence)
+	if !strings.Contains(matches[0].Evidence, "neighbor_scan") {
+		t.Fatalf("evidence should mention neighbor_scan: %q", matches[0].Evidence)
 	}
-	v, ok := out[0].Metadata["validation"].(map[string]any)
+	v, ok := matches[0].Metadata["validation"].(map[string]any)
 	if !ok {
-		t.Fatalf("validation metadata missing: %+v", out[0].Metadata)
+		t.Fatalf("validation metadata missing: %+v", matches[0].Metadata)
 	}
 	if v["technique"] != "neighbor_scan" {
 		t.Fatalf("validation technique = %v, want neighbor_scan", v["technique"])
 	}
 	if v["method"] != "host_header_neighbor" {
 		t.Fatalf("validation method = %v, want host_header_neighbor", v["method"])
+	}
+	if len(out) != 2 || out[1].Metadata["diagnostic"] == nil {
+		t.Fatalf("neighbor summary diagnostic missing: %+v", out)
 	}
 }
 

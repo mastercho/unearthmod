@@ -191,6 +191,35 @@ func TestDiscover_DisableNeighborScanSkipsTechnique(t *testing.T) {
 	}
 }
 
+func TestDiscover_ConfirmedConsumerSkipsWithoutConfirmedSeeds(t *testing.T) {
+	neighbor := &confirmedConsumerFake{
+		fakeTech: fakeTech{name: "neighbor_scan", weight: 0.78, tier: techniques.TierActive},
+		consumes: true,
+	}
+	withSelector(t,
+		&fakeTech{name: "p", weight: 0.5, candidates: []techniques.Candidate{{IP: "203.0.113.11"}}},
+		neighbor,
+	)
+	opts := testOpts()
+	opts.Tier = techniques.TierActive
+	res, err := Discover(context.Background(), "example.test", opts)
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if neighbor.ranOnce.Load() != 0 {
+		t.Fatal("confirmed consumer must not run without confirmed seeds")
+	}
+	foundSkip := false
+	for _, r := range res.TechniqueRuns {
+		if r.Technique == "neighbor_scan" && r.Status == "skipped" && r.Reason == "no_confirmed_candidates" {
+			foundSkip = true
+		}
+	}
+	if !foundSkip {
+		t.Fatalf("missing no-confirmed-candidates skip: %+v", res.TechniqueRuns)
+	}
+}
+
 func TestDiscover_PassiveOnlyHasEmptyPhase2(t *testing.T) {
 	// A passive-only run must behave exactly like Packet 3: no consumer
 	// gets selected, so phase 2 is empty and the run is fully parallel.

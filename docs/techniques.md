@@ -51,7 +51,7 @@ Both backends run in parallel. If one fails, the technique returns the other's r
 
 **Tier:** Passive | **Weight:** 0.50 | **API key:** None
 
-**What it does:** Looks up the target's SPF record (from its TXT records) and MX records, resolves the IP mechanisms and mail server hostnames, and returns non-CDN IPs as origin candidates. The hypothesis: mail infrastructure often shares the same physical host or network as the web origin.
+**What it does:** Looks up SPF TXT and MX records at the target's registrable apex first (for example, `gaytell.com` when scanning `www.gaytell.com`), with the literal hostname retained as a fallback. It parses qualified and unqualified `ip4`, `ip6`, `a`, `mx`, and one-level `include` mechanisms, resolves mail hostnames, and returns non-CDN IPs as origin candidates. The hypothesis: mail infrastructure often shares the same physical host or network as the web origin.
 
 **Limitations:** Only effective when the domain's mail infrastructure overlaps its web infrastructure. SaaS-hosted mail (G Suite, Office 365) produces many false leads that the CDN filter drops, but the technique may still produce misleading candidates.
 

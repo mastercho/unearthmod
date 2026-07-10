@@ -11,6 +11,7 @@ import (
 
 	"github.com/unearth-tool/unearth/pkg/cache"
 	"github.com/unearth-tool/unearth/pkg/cdn"
+	"golang.org/x/net/publicsuffix"
 )
 
 func init() { Register(spfMXTechnique{}) }
@@ -35,7 +36,8 @@ type spfMXCache struct {
 }
 
 func (spfMXTechnique) Run(ctx context.Context, target string, opts RunOptions) ([]Candidate, error) {
-	key := cache.Key("spf_mx", target, nil)
+	lookupHosts := spfLookupHosts(target)
+	key := cache.Key("spf_mx", target, map[string]string{"schema": "2"})
 	if cached, ok := cacheRead(opts.Cache, opts, key); ok {
 		var c spfMXCache
 		if err := json.Unmarshal(cached, &c); err == nil {
@@ -54,12 +56,20 @@ func (spfMXTechnique) Run(ctx context.Context, target string, opts RunOptions) (
 		out = append(out, Candidate{IP: a.String(), Evidence: evidence})
 	}
 
-	// SPF, including one-level include: expansion.
-	out = append(out, gatherSPF(ctx, opts, target, target, 0, seen, add)...)
+	// SPF is normally published at the registrable apex, not on a requested
+	// hostname such as www.example.com. Query the apex first and retain the
+	// literal target as a fallback for unusual per-host SPF deployments.
+	for _, host := range lookupHosts {
+		gatherSPF(ctx, opts, target, host, 0, seen, add)
+	}
 
-	// MX targets.
-	if err := rateWait(ctx, opts.RateLimiter, "dns"); err == nil {
-		if mxs, err := activeResolver.LookupMX(ctx, target); err == nil {
+	// MX targets follow the same apex-first lookup rule.
+	for _, mailDomain := range lookupHosts {
+		if err := rateWait(ctx, opts.RateLimiter, "dns"); err == nil {
+			mxs, err := activeResolver.LookupMX(ctx, mailDomain)
+			if err != nil {
+				continue
+			}
 			for _, host := range mxs {
 				host = strings.TrimSuffix(strings.ToLower(host), ".")
 				if host == "" {
@@ -81,6 +91,18 @@ func (spfMXTechnique) Run(ctx context.Context, target string, opts RunOptions) (
 		cacheWrite(opts.Cache, opts, key, payload, spfMXTTL)
 	}
 	return out, nil
+}
+
+func spfLookupHosts(target string) []string {
+	host := strings.TrimSuffix(strings.ToLower(canonicalTargetHost(target)), ".")
+	if host == "" {
+		return nil
+	}
+	apex, err := publicsuffix.EffectiveTLDPlusOne(host)
+	if err != nil || apex == "" || apex == host {
+		return []string{host}
+	}
+	return []string{apex, host}
 }
 
 // gatherSPF parses TXT records of `host`, walks v=spf1 mechanisms, and emits
@@ -106,6 +128,9 @@ func gatherSPF(
 		}
 		for _, tok := range strings.Fields(txt) {
 			tok = strings.ToLower(tok)
+			if tok != "" && strings.ContainsRune("+-~?", rune(tok[0])) {
+				tok = tok[1:]
+			}
 			switch {
 			case strings.HasPrefix(tok, "ip4:"), strings.HasPrefix(tok, "ip6:"):
 				val := tok[4:]
@@ -116,8 +141,8 @@ func gatherSPF(
 				if a, err := netip.ParseAddr(val); err == nil {
 					add(a, fmt.Sprintf("SPF %s for %s lists %s", tok[:3], origin, a))
 				}
-			case strings.HasPrefix(tok, "a:"):
-				name := tok[2:]
+			case tok == "a", strings.HasPrefix(tok, "a:"):
+				name := strings.TrimPrefix(tok, "a:")
 				if name == "" {
 					name = host
 				}

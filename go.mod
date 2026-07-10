@@ -4,7 +4,9 @@ go 1.24
 
 require (
 	github.com/mark3labs/mcp-go v0.48.0
+	github.com/refraction-networking/utls v1.8.2
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/net v0.38.0
 	golang.org/x/time v0.5.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.30.2
@@ -20,13 +22,11 @@ require (
 	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
-	golang.org/x/net v0.38.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	modernc.org/gc/v3 v3.1.2 // indirect

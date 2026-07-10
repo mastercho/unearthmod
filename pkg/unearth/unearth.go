@@ -352,10 +352,20 @@ func Discover(ctx context.Context, target string, opts Options) (*Result, error)
 	// passive-only guesses.
 	if len(phase3) > 0 {
 		seeds := collectConfirmedSeedIPs(groups)
-		phase3Opts := runOpts
-		phase3Opts.SeedIPs = seeds
-		phase3Results := runBatch(overallCtx, phase3, target, phase3Opts, opts)
-		foldResults(phase3Results)
+		if len(seeds) == 0 {
+			for _, t := range phase3 {
+				result.TechniqueRuns = append(result.TechniqueRuns, TechniqueRun{
+					Technique: t.Name(),
+					Status:    "skipped",
+					Reason:    "no_confirmed_candidates",
+				})
+			}
+		} else {
+			phase3Opts := runOpts
+			phase3Opts.SeedIPs = seeds
+			phase3Results := runBatch(overallCtx, phase3, target, phase3Opts, opts)
+			foldResults(phase3Results)
+		}
 	}
 
 	// Score and finalize.

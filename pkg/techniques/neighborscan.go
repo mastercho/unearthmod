@@ -100,6 +100,10 @@ func (neighborScanTechnique) Run(ctx context.Context, target string, opts RunOpt
 		cands = append(cands, cand)
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].IP < cands[j].IP })
+	cands = append(cands, neighborScanDiagnostic(fmt.Sprintf(
+		"scanned %d neighboring IPv4 address(es) across %d confirmed /24 seed(s); confirmed %d neighbor(s)",
+		len(neighbors), countNeighborSubnets(opts.SeedIPs), len(cands),
+	)))
 	return cands, nil
 }
 
@@ -147,4 +151,26 @@ func annotateNeighborValidation(c *Candidate) {
 		return
 	}
 	raw["method"] = "neighbor"
+}
+
+func countNeighborSubnets(seeds []netip.Addr) int {
+	subnets := map[[3]byte]bool{}
+	for _, seed := range seeds {
+		seed = seed.Unmap()
+		if !seed.Is4() || isReservedAddr(seed) || cdn.IsCDNIP(seed) {
+			continue
+		}
+		b := seed.As4()
+		subnets[[3]byte{b[0], b[1], b[2]}] = true
+	}
+	return len(subnets)
+}
+
+func neighborScanDiagnostic(message string) Candidate {
+	return Candidate{Metadata: map[string]any{
+		"diagnostic": map[string]any{
+			"event":   "summary",
+			"message": message,
+		},
+	}}
 }
