@@ -5,6 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Improved `phpinfo_scan` on Cloudflare-protected targets by sending browser navigation headers, retrying managed-challenge responses with the Chrome-like uTLS client, and emitting a verbose diagnostic when the page remains unavailable from the scanner's network.
+- Increased the phpinfo response limit from 256 KiB to 2 MiB so `SERVER_ADDR` and `LOCAL_ADDR` fields near the end of large pages are not truncated.
+
 ## [1.0.16] — 2026-07-10
 
 ### Fixed

@@ -29,7 +29,7 @@ func (phpInfoTechnique) RequiresAPIKey() bool   { return false }
 func (phpInfoTechnique) DefaultWeight() float64 { return 0.74 }
 
 const (
-	phpInfoBodyLimit    = 256 * 1024
+	phpInfoBodyLimit    = 2 * 1024 * 1024
 	phpInfoProbeTimeout = 3 * time.Second
 	phpInfoWorkers      = 8
 )
@@ -70,11 +70,16 @@ var phpInfoPaths = []string{
 	"/testxx.php",
 }
 
+var newPHPInfoChallengeClient = func() *http.Client {
+	return newHostHeaderBrowserClient(phpInfoProbeTimeout, "")
+}
+
 func (phpInfoTechnique) Run(ctx context.Context, target string, opts RunOptions) ([]Candidate, error) {
 	hc := opts.HTTPClient
 	if hc == nil {
 		hc = http.DefaultClient
 	}
+	challengeClient := newPHPInfoChallengeClient()
 
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -96,6 +101,8 @@ func (phpInfoTechnique) Run(ctx context.Context, target string, opts RunOptions)
 	}
 	jobs := make(chan string)
 	results := make(chan result, 1)
+	var challengeOnce sync.Once
+	var challengeURL string
 	var wg sync.WaitGroup
 	for i := 0; i < phpInfoWorkers; i++ {
 		wg.Add(1)
@@ -105,8 +112,11 @@ func (phpInfoTechnique) Run(ctx context.Context, target string, opts RunOptions)
 				if err := rateWait(scanCtx, opts.RateLimiter, "phpinfo"); err != nil {
 					return
 				}
-				body, ok := fetchPHPInfo(scanCtx, hc, u)
+				body, ok, challenged := fetchPHPInfo(scanCtx, hc, challengeClient, u)
 				if !ok {
+					if challenged {
+						challengeOnce.Do(func() { challengeURL = u })
+					}
 					continue
 				}
 				select {
@@ -140,8 +150,22 @@ func (phpInfoTechnique) Run(ctx context.Context, target string, opts RunOptions)
 		<-done
 		return phpInfoCandidates(r.body, r.url), nil
 	case <-done:
+		// A successful worker sends its result before decrementing the wait
+		// group. If both channels become ready together, prefer that buffered
+		// result instead of incorrectly reporting a zero-result scan.
+		select {
+		case r := <-results:
+			return phpInfoCandidates(r.body, r.url), nil
+		default:
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if challengeURL != "" {
+			return []Candidate{phpInfoDiagnosticCandidate(fmt.Sprintf(
+				"Cloudflare challenge blocked phpinfo inspection at %s; the endpoint may be visible in a browser but its SERVER_ADDR was not present in the scanner response",
+				challengeURL,
+			))}, nil
 		}
 		return nil, nil
 	case <-ctx.Done():
@@ -157,32 +181,53 @@ func phpInfoBaseURLs(target string) []string {
 	return []string{"https://" + t, "http://" + t}
 }
 
-func fetchPHPInfo(ctx context.Context, hc *http.Client, u string) (string, bool) {
+func fetchPHPInfo(ctx context.Context, hc, challengeClient *http.Client, u string) (string, bool, bool) {
+	body, ok, challenged := fetchPHPInfoOnce(ctx, hc, u)
+	if ok || !challenged || challengeClient == nil || challengeClient == hc {
+		return body, ok, challenged
+	}
+	body, ok, retryChallenged := fetchPHPInfoOnce(ctx, challengeClient, u)
+	return body, ok, retryChallenged
+}
+
+func fetchPHPInfoOnce(ctx context.Context, hc *http.Client, u string) (string, bool, bool) {
 	probeCtx, cancel := context.WithTimeout(ctx, phpInfoProbeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, u, nil)
 	if err != nil {
-		return "", false
+		return "", false, false
 	}
-	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	setHostHeaderBrowserHeaders(req)
 
 	resp, err := hc.Do(req)
 	if err != nil {
-		return "", false
+		return "", false, false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", false
-	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, phpInfoBodyLimit))
 	if err != nil {
-		return "", false
+		return "", false, false
 	}
 	text := string(body)
-	if !strings.Contains(text, "PHP Extension") || !strings.Contains(text, "PHP Version") {
-		return "", false
+	if resp.StatusCode != http.StatusOK {
+		return "", false, isCloudflareChallenge(resp, text)
 	}
-	return text, true
+	if !strings.Contains(text, "PHP Extension") || !strings.Contains(text, "PHP Version") {
+		return "", false, false
+	}
+	return text, true, false
+}
+
+func isCloudflareChallenge(resp *http.Response, body string) bool {
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(resp.Header.Get("Cf-Mitigated")), "challenge") {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(resp.Header.Get("Server")), "cloudflare") &&
+		(strings.Contains(strings.ToLower(body), "just a moment") ||
+			strings.Contains(strings.ToLower(body), "challenges.cloudflare.com"))
 }
 
 func phpInfoCandidates(body, sourceURL string) []Candidate {
@@ -240,4 +285,13 @@ func firstIPToken(text string) (netip.Addr, bool) {
 		return a.Unmap(), true
 	}
 	return netip.Addr{}, false
+}
+
+func phpInfoDiagnosticCandidate(message string) Candidate {
+	return Candidate{Metadata: map[string]any{
+		"diagnostic": map[string]any{
+			"event":   "blocked",
+			"message": message,
+		},
+	}}
 }
