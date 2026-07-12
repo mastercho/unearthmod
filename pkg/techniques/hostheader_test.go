@@ -43,20 +43,33 @@ func (s *hostHeaderStubRT) RoundTrip(req *http.Request) (*http.Response, error) 
 				resp.Header.Add(k, v)
 			}
 		}
+		resp.Request = req
 		return resp, nil
 	}
 	if fn, ok := s.byURL[url]; ok {
-		return fn(req)
+		resp, err := fn(req)
+		if resp != nil && resp.Request == nil {
+			resp.Request = req
+		}
+		return resp, err
 	}
 	if fn, ok := s.byHost[req.URL.Host]; ok {
-		return fn(req)
+		resp, err := fn(req)
+		if resp != nil && resp.Request == nil {
+			resp.Request = req
+		}
+		return resp, err
 	}
 	if h, _, err := net.SplitHostPort(req.URL.Host); err == nil {
 		if fn, ok := s.byHost[h]; ok {
-			return fn(req)
+			resp, callErr := fn(req)
+			if resp != nil && resp.Request == nil {
+				resp.Request = req
+			}
+			return resp, callErr
 		}
 	}
-	return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("404"))}, nil
+	return &http.Response{StatusCode: 404, Body: io.NopCloser(strings.NewReader("404")), Request: req}, nil
 }
 
 // withHostHeaderClient swaps the per-technique insecure-client builder so
@@ -164,6 +177,51 @@ func TestHostHeader_ConfirmsDirectIPOrigin(t *testing.T) {
 	}
 	if v["method"] != "direct" {
 		t.Fatalf("validation method = %v, want direct", v["method"])
+	}
+}
+
+func TestHostHeader_RejectsRedirectBackToProtectedTarget(t *testing.T) {
+	body := "<html><body>" + strings.Repeat("protected target content ", 40) + "</body></html>"
+	rt := &hostHeaderStubRT{
+		baselineBody: body,
+		byURL: map[string]func(*http.Request) (*http.Response, error){
+			"https://203.0.113.53:443/": func(*http.Request) (*http.Response, error) {
+				resp := stubResponse(http.StatusFound, "redirecting")
+				resp.Header.Set("Location", "https://example.test/")
+				return resp, nil
+			},
+		},
+		byHost: map[string]func(*http.Request) (*http.Response, error){
+			"example.test": func(*http.Request) (*http.Response, error) {
+				return stubResponse(http.StatusOK, body), nil
+			},
+		},
+	}
+	// This client deliberately follows redirects to reproduce the old bug.
+	// The final response is the baseline itself, but it must not confirm the IP
+	// because the response URL left the candidate address.
+	hc := &http.Client{Transport: rt}
+	withHostHeaderClient(t, hc)
+
+	out, err := hostHeaderTechnique{}.Run(context.Background(), "example.test", RunOptions{
+		HTTPClient: hc,
+		SeedIPs:    []netip.Addr{netip.MustParseAddr("203.0.113.53")},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(realHostHeaderCandidates(out)) != 0 {
+		t.Fatalf("redirect to protected target must not confirm candidate: %+v", out)
+	}
+	var sawRedirectReject bool
+	for _, c := range out {
+		raw, _ := c.Metadata["diagnostic"].(map[string]any)
+		if raw["reason"] == "redirected_off_candidate" {
+			sawRedirectReject = true
+		}
+	}
+	if !sawRedirectReject {
+		t.Fatalf("missing redirected_off_candidate diagnostic: %+v", out)
 	}
 }
 

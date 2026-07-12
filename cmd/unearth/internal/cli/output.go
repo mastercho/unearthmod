@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -302,17 +305,60 @@ func originVerifyCommand(target, ip string, v *unearth.Validation) string {
 	if v == nil {
 		return ""
 	}
-	u := v.URL
-	if u == "" && v.Scheme != "" && v.Port != 0 {
-		u = fmt.Sprintf("%s://%s:%d/", v.Scheme, ip, v.Port)
+	scheme, port := v.Scheme, v.Port
+	if parsed, err := url.Parse(v.URL); err == nil {
+		if scheme == "" {
+			scheme = parsed.Scheme
+		}
+		if port == 0 {
+			if parsedPort, err := strconv.Atoi(parsed.Port()); err == nil {
+				port = parsedPort
+			}
+		}
 	}
-	if u == "" {
+	if scheme == "" {
+		scheme = "https"
+	}
+	if port == 0 {
+		if scheme == "http" {
+			port = 80
+		} else {
+			port = 443
+		}
+	}
+
+	if strings.HasPrefix(v.Method, "host_header") {
+		host := originVerifyTargetHost(target)
+		if host == "" {
+			return ""
+		}
+		resolveIP := ip
+		if strings.Contains(resolveIP, ":") {
+			resolveIP = "[" + strings.Trim(resolveIP, "[]") + "]"
+		}
+		resolve := fmt.Sprintf("%s:%d:%s", host, port, resolveIP)
+		targetURL := fmt.Sprintf("%s://%s/", scheme, net.JoinHostPort(host, strconv.Itoa(port)))
+		return fmt.Sprintf("curl -sk --resolve %q %s", resolve, targetURL)
+	}
+
+	if ip == "" {
 		return ""
 	}
-	if v.Method == "host_header" {
-		return fmt.Sprintf("curl -sk -H %q %s", "Host: "+target, u)
+	return fmt.Sprintf("curl -sk %s://%s/", scheme, net.JoinHostPort(ip, strconv.Itoa(port)))
+}
+
+func originVerifyTargetHost(target string) string {
+	raw := strings.TrimSpace(target)
+	if raw == "" {
+		return ""
 	}
-	return "curl -sk " + u
+	if !strings.Contains(raw, "://") {
+		raw = "//" + raw
+	}
+	if parsed, err := url.Parse(raw); err == nil && parsed.Hostname() != "" {
+		return parsed.Hostname()
+	}
+	return ""
 }
 
 func containsString(haystack []string, needle string) bool {

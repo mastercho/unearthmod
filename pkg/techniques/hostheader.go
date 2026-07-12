@@ -93,14 +93,22 @@ var newHostHeaderBaselineClient = func() *http.Client {
 // probes. It intentionally does not pin TLS ServerName to the target; this
 // matches browser/direct-IP verification used by tools like unwaf.
 var newHostHeaderDirectClient = func() *http.Client {
-	return newHostHeaderBrowserClient(hostHeaderProbeTimeout, "")
+	return newHostHeaderProbeClient("")
 }
 
 // newHostHeaderInsecureClient builds the dedicated TLS-skip client used for
 // host-header probes. The TLS ServerName is pinned to the target so HTTPS origins
 // that route by SNI can be validated while connecting to an IP literal.
 var newHostHeaderInsecureClient = func(target string) *http.Client {
-	return newHostHeaderBrowserClient(hostHeaderProbeTimeout, canonicalTargetHost(target))
+	return newHostHeaderProbeClient(canonicalTargetHost(target))
+}
+
+func newHostHeaderProbeClient(serverNameOverride string) *http.Client {
+	hc := newHostHeaderBrowserClient(hostHeaderProbeTimeout, serverNameOverride)
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return hc
 }
 
 func (hostHeaderTechnique) Run(ctx context.Context, target string, opts RunOptions) ([]Candidate, error) {
@@ -270,6 +278,10 @@ func probeIPForHost(ctx context.Context, directClient, hostClient *http.Client, 
 			if err != nil {
 				continue
 			}
+			if !hostHeaderProbeURLMatchesIP(p.URL, ip) {
+				diagnostic = betterHostHeaderDiagnostic(diagnostic, hostHeaderRejectDiagnostic(ip, mode.Method, p, hostHeaderScore{}, "redirected_off_candidate"))
+				continue
+			}
 			if hasCDNHeaders(p.Header) {
 				diagnostic = betterHostHeaderDiagnostic(diagnostic, hostHeaderRejectDiagnostic(ip, mode.Method, p, hostHeaderScore{}, "cdn_headers"))
 				continue
@@ -315,6 +327,18 @@ func probeIPForHost(ctx context.Context, directClient, hostClient *http.Client, 
 		return best, true, nil
 	}
 	return best, false, diagnostic
+}
+
+func hostHeaderProbeURLMatchesIP(rawURL string, want netip.Addr) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	got, err := netip.ParseAddr(u.Hostname())
+	if err != nil {
+		return false
+	}
+	return got.Unmap() == want.Unmap()
 }
 
 func fetchHostHeaderResponse(ctx context.Context, hc *http.Client, u, host string) (hostHeaderProbe, error) {

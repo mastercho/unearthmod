@@ -117,10 +117,12 @@ See [docs/techniques.md](docs/techniques.md) for detailed descriptions of each t
 
 `unearth` is fully usable with zero API keys. The keyless passive techniques (`ct_fingerprint`, `crtsh`, `spf_mx`, `subdomain_enum`, `split_dns`, `email_header`, `otx_passivedns`) plus keyless active techniques (`host_header`, `neighbor_scan`, `asn_sweep`, `jarm_fingerprint`) cover the common case. API keys extend coverage with higher-confidence keyed sources.
 
-Copy `.env.example` to `.env`, then fill in only the credentials you want to use:
+For an installed command that loads the same credentials from every working directory, copy `.env.example` to Unearth's user configuration directory, then fill in only the credentials you want to use:
 
 ```sh
-cp .env.example .env
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/unearth"
+cp .env.example "${XDG_CONFIG_HOME:-$HOME/.config}/unearth/.env"
+chmod 600 "${XDG_CONFIG_HOME:-$HOME/.config}/unearth/.env"
 ```
 
 `.env` uses normal `KEY=value` lines:
@@ -145,7 +147,7 @@ OTX_API_KEY="your-alienvault-otx-key"          # optional; otx_passivedns runs a
 GREYNOISE_API_KEY="your-greynoise-key"         # GNQL search lives in the paid Investigate/Enterprise tiers
 ```
 
-The CLI automatically loads `.env` from the current working directory before reading the process environment. Set `UNEARTH_ENV_FILE=/path/to/.env` to use a different file. Process environment values win when both are present.
+The CLI loads credentials in this priority order: existing process environment variables, `UNEARTH_ENV_FILE` when explicitly set, `.env` in the current working directory, then `$XDG_CONFIG_HOME/unearth/.env` (defaulting to `~/.config/unearth/.env`). This preserves project-local overrides while making the normal user configuration available regardless of where `unearth` is launched.
 
 The tool announces which keys are loaded (or absent) on every run. Key-required techniques are silently skipped when the key is missing.
 

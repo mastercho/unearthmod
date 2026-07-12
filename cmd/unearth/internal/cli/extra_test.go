@@ -97,7 +97,7 @@ func TestVerbose_EmitsResultMetaOnStderrForJSONL(t *testing.T) {
 		"Method:       host_header",
 		"Overall:      82.0%",
 		"Status:       200",
-		`Verify:       curl -sk -H "Host: example.test" https://203.0.113.1:443/`,
+		`Verify:       curl -sk --resolve "example.test:443:203.0.113.1" https://example.test:443/`,
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
@@ -105,6 +105,29 @@ func TestVerbose_EmitsResultMetaOnStderrForJSONL(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"status":"confirmed"`) {
 		t.Errorf("stdout should include confirmed status: %q", stdout)
+	}
+}
+
+func TestOriginVerifyCommandAlwaysPinsCandidateIP(t *testing.T) {
+	hostHeader := originVerifyCommand("www.example.test", "203.0.113.20", &unearth.Validation{
+		Method: "host_header",
+		URL:    "https://www.example.test/",
+		Scheme: "https",
+		Port:   443,
+	})
+	wantHostHeader := `curl -sk --resolve "www.example.test:443:203.0.113.20" https://www.example.test:443/`
+	if hostHeader != wantHostHeader {
+		t.Fatalf("host-header verify command:\nwant: %s\n got: %s", wantHostHeader, hostHeader)
+	}
+
+	direct := originVerifyCommand("www.example.test", "203.0.113.21", &unearth.Validation{
+		Method: "direct",
+		URL:    "https://www.example.test/",
+		Scheme: "https",
+		Port:   443,
+	})
+	if want := "curl -sk https://203.0.113.21:443/"; direct != want {
+		t.Fatalf("direct verify command:\nwant: %s\n got: %s", want, direct)
 	}
 }
 

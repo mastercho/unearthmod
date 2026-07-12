@@ -335,6 +335,51 @@ func TestLoadAPIKeys_DotEnvFile(t *testing.T) {
 	}
 }
 
+func TestLoadAPIKeys_UserConfigDotEnvFromAnyWorkingDirectory(t *testing.T) {
+	clearCredentialEnv(t)
+	t.Setenv("UNEARTH_ENV_FILE", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Chdir(t.TempDir())
+
+	envDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "unearth")
+	if err := os.MkdirAll(envDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envDir, ".env"), []byte(
+		"SHODAN_API_KEY=user-config-shodan\nSECURITYTRAILS_API_KEY=user-config-st\n",
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	k := LoadAPIKeys()
+	if k.ShodanAPIKey != "user-config-shodan" || k.SecurityTrailsKey != "user-config-st" {
+		t.Fatalf("user config dotenv keys not loaded: %+v", k)
+	}
+}
+
+func TestLoadAPIKeys_LocalDotEnvWinsOverUserConfig(t *testing.T) {
+	clearCredentialEnv(t)
+	t.Setenv("UNEARTH_ENV_FILE", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	localDir := t.TempDir()
+	t.Chdir(localDir)
+
+	userDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "unearth")
+	if err := os.MkdirAll(userDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(userDir, ".env"), []byte("SHODAN_API_KEY=user\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, ".env"), []byte("SHODAN_API_KEY=local\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := LoadAPIKeys().ShodanAPIKey; got != "local" {
+		t.Fatalf("local .env should win over user config, got %q", got)
+	}
+}
+
 func TestLoadAPIKeys_ProcessEnvWinsOverDotEnv(t *testing.T) {
 	clearCredentialEnv(t)
 	dir := t.TempDir()
